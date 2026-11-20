@@ -1,0 +1,15 @@
+# Xcode
+xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+.swiftpm/
+
+# Pipeline
+.ldraw/
+pipeline/render/node_modules/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

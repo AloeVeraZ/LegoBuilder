@@ -1,0 +1,39 @@
+# Fallback only: BuildLens.xcodeproj is already in the repo.
+# If Xcode ever refuses to open it, regenerate with:  brew install xcodegen && cd app && xcodegen
+name: BuildLens
+options:
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+targets:
+  BuildLens:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: BuildLens
+        excludes:
+          - Info.plist
+    settings:
+      base:
+        PRODUCT_NAME: BuildLens
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.buildlens
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: BuildLens/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: BuildLens
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.education
+        INFOPLIST_KEY_NSCameraUsageDescription: BuildLens uses the camera to recognise your set and show the building steps in AR.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: BuildLens keeps your iPhone and Mac on the same building step.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: BuildLens listens for "next", "back" and "repeat" so you can build hands-free.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: BuildLens turns your voice commands into step changes.
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES

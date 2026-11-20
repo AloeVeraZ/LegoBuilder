@@ -1,0 +1,12 @@
+{
+  "name": "buildlens-render",
+  "private": true,
+  "type": "module",
+  "description": "Renders part thumbnails, step previews and glasses-HUD frames from a BuildLens build package.",
+  "scripts": {
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  }
+}

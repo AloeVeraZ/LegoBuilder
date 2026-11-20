@@ -1,0 +1,222 @@
+#if os(iOS)
+import SwiftUI
+import RealityKit
+import ARKit
+import Vision
+
+/// Camera view for scanning the box and building in AR.
+///
+/// While scanning, it reads text from the camera (every ~0.4 s) and looks for the set number
+/// printed on the box or booklet. If a photo of the box front is bundled (BoxFront.jpg) ARKit
+/// also recognises the artwork. Tapping a table places the model by hand.
+struct ARExperienceView: UIViewRepresentable {
+    let app: AppModel
+
+    func makeCoordinator() -> ARCoordinator { ARCoordinator(app: app) }
+
+    func makeUIView(context: Context) -> ARView {
+        let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
+        context.coordinator.attach(view)
+        return view
+    }
+
+    func updateUIView(_ uiView: ARView, context: Context) {}
+
+    static func dismantleUIView(_ uiView: ARView, coordinator: ARCoordinator) {
+        coordinator.stop()
+    }
+}
+
+@MainActor
+final class ARCoordinator: NSObject, ARSessionDelegate {
+    private let app: AppModel
+    private weak var view: ARView?
+    private var anchor: AnchorEntity?
+    private var lastScan: TimeInterval = 0
+    private var readingText = false
+    private var gesturesInstalled = false
+    private var placeWhenTracking = false
+
+    init(app: AppModel) {
+        self.app = app
+    }
+
+    func attach(_ view: ARView) {
+        self.view = view
+        let config = ARWorldTrackingConfiguration()
+        config.planeDetection = [.horizontal]
+        config.environmentTexturing = .automatic
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
+            // Lets your hands appear in front of the virtual model while you build.
+            config.frameSemantics.insert(.personSegmentationWithDepth)
+        }
+        if let reference = Self.boxReferenceImage() {
+            config.detectionImages = [reference]
+            config.maximumNumberOfTrackedImages = 1
+        }
+        view.session.delegate = self
+        view.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+
+        let coaching = ARCoachingOverlayView()
+        coaching.session = view.session
+        coaching.goal = .horizontalPlane
+        coaching.activatesAutomatically = true
+        coaching.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(coaching)
+        NSLayoutConstraint.activate([
+            coaching.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            coaching.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            coaching.topAnchor.constraint(equalTo: view.topAnchor),
+            coaching.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
+
+        // Coming back from the 3D view mid-build: put the model in front of the camera.
+        placeWhenTracking = app.arPhase != .scanning
+    }
+
+    func stop() {
+        view?.session.pause()
+    }
+
+    /// Start over: hide the model and look for the box again.
+    func rescan() {
+        anchor?.removeFromParent()
+        anchor = nil
+    }
+
+    // MARK: ARSessionDelegate (ARKit calls these on the main queue)
+
+    nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        MainActor.assumeIsolated { self.handle(frame) }
+    }
+
+    nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        MainActor.assumeIsolated {
+            guard self.app.arPhase == .scanning else { return }
+            if let image = anchors.compactMap({ $0 as? ARImageAnchor }).first {
+                self.place(at: image.transform.translation, found: true)
+            }
+        }
+    }
+
+    // MARK: scanning
+
+    private func handle(_ frame: ARFrame) {
+        guard let view else { return }
+        guard case .normal = frame.camera.trackingState else { return }
+
+        if placeWhenTracking {
+            placeWhenTracking = false
+            placeInFront()
+            return
+        }
+        if app.arPhase == .scanning, app.needsRescan {
+            app.needsRescan = false
+            rescan()
+        }
+        guard app.arPhase == .scanning, !readingText, frame.timestamp - lastScan > 0.4 else { return }
+        lastScan = frame.timestamp
+        readingText = true
+
+        let buffer = frame.capturedImage
+        let viewport = view.bounds.size
+        let portrait = (view.window?.windowScene?.interfaceOrientation ?? .portrait) == .portrait
+        let display = frame.displayTransform(for: .portrait, viewportSize: viewport)
+        let number = BuildConfig.setNumber
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let hit = SetNumberReader.find(number, in: buffer)
+            Task { @MainActor in
+                guard let self else { return }
+                self.readingText = false
+                guard let hit, self.app.arPhase == .scanning else { return }
+                var screen = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+                if portrait {
+                    // Vision point (upright portrait image, origin top-left) -> camera image -> view.
+                    let imagePoint = CGPoint(x: hit.y, y: 1 - hit.x)
+                    let normalized = imagePoint.applying(display)
+                    screen = CGPoint(x: normalized.x * viewport.width, y: normalized.y * viewport.height)
+                }
+                self.place(atScreenPoint: screen, found: true)
+            }
+        }
+    }
+
+    @objc private func tapped(_ gesture: UITapGestureRecognizer) {
+        guard let view, app.arPhase == .scanning else { return }
+        let point = gesture.location(in: view)
+        if let hit = view.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first {
+            place(at: hit.worldTransform.translation, found: false)
+        }
+    }
+
+    // MARK: placing the model
+
+    private func place(atScreenPoint point: CGPoint, found: Bool) {
+        guard let view else { return }
+        if let hit = view.raycast(from: point, allowing: .estimatedPlane, alignment: .any).first {
+            place(at: hit.worldTransform.translation, found: found)
+        } else {
+            placeInFront(found: found)
+        }
+    }
+
+    private func placeInFront(found: Bool = false) {
+        guard let view else { return }
+        let centre = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        if let hit = view.raycast(from: centre, allowing: .estimatedPlane, alignment: .horizontal).first {
+            place(at: hit.worldTransform.translation, found: found)
+            return
+        }
+        let camera = view.cameraTransform
+        let forward = camera.rotation.act(SIMD3<Float>(0, 0, -1))
+        var position = camera.translation + forward * 0.45
+        position.y -= 0.15
+        place(at: position, found: found)
+    }
+
+    private func place(at position: SIMD3<Float>, found: Bool) {
+        guard let view, let scene = app.scene else { return }
+        let anchor: AnchorEntity
+        if let existing = self.anchor {
+            anchor = existing
+        } else {
+            anchor = AnchorEntity(world: position)
+            view.scene.addAnchor(anchor)
+            self.anchor = anchor
+        }
+        anchor.position = position
+        anchor.addChild(scene.root)
+
+        // Face the camera, at a comfortable size, growing in with a spin.
+        let toCamera = view.cameraTransform.translation - position
+        let yaw = atan2(toCamera.x, toCamera.z)
+        let (lo, hi) = scene.model.finishedBounds
+        let longest = max(hi.x - lo.x, hi.y - lo.y, hi.z - lo.z, 0.001)
+        let scale = max(1, BuildConfig.arTargetSize / longest)
+        let finalTransform = Transform(scale: SIMD3(repeating: scale), rotation: simd_quatf(angle: yaw, axis: [0, 1, 0]), translation: .zero)
+        scene.root.stopAllAnimations()
+        scene.root.transform = Transform(scale: SIMD3(repeating: scale * 0.02), rotation: simd_quatf(angle: yaw - .pi * 0.9, axis: [0, 1, 0]), translation: .zero)
+        _ = scene.root.move(to: finalTransform, relativeTo: anchor, duration: 0.9, timingFunction: .easeOut)
+
+        if !gesturesInstalled {
+            gesturesInstalled = true
+            _ = view.installGestures([.translation, .rotation, .scale], for: scene.root)
+        }
+        if app.arPhase == .scanning {
+            app.didPlaceModel(found: found)
+        }
+    }
+
+    private static func boxReferenceImage() -> ARReferenceImage? {
+        let url = Bundle.main.url(forResource: BuildConfig.boxImageName, withExtension: "jpg")
+            ?? Bundle.main.url(forResource: BuildConfig.boxImageName, withExtension: "png")
+        guard let url, let image = UIImage(contentsOfFile: url.path)?.cgImage else { return nil }
+        let reference = ARReferenceImage(image, orientation: .up, physicalWidth: BuildConfig.boxImageWidthMeters)
+        reference.name = "box"
+        return reference
+    }
+}
+#endif
