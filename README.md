@@ -30,8 +30,25 @@ pipeline/                 turns a digital brick model into the app's step data
   render/                 headless three.js renderer: part thumbnails, glasses frames, previews
   make_package.sh         convert + render + copy into the app, in one go
   fetch_ldraw.sh          downloads the LDraw parts library (needed by the converter)
+web/                      Windows / browser version: builds one self-contained BuildLens.html
 docs/GLASSES.md           plan for the MicroLumin M6 glasses version
 ```
+
+## Run it on Windows (or any computer)
+
+Open **`web/dist/BuildLens.html`** in Chrome or Edge. On GitHub, open the file and use
+**Download raw file**, then double-click it. It's a single self-contained file with no install,
+no server and no internet needed, and it works offline at a demo table.
+
+- `←` / `→` (or Space) change steps, `R` replays the step, `G` shows the glasses preview.
+- Drag to orbit, scroll to zoom, right-drag to pan.
+- 🎤 **Voice**: say "next", "back", "repeat" or "done" (Chrome/Edge; allow the microphone).
+- **Read aloud** speaks each step; **Focus on new** fades the earlier pieces.
+
+The Windows version has the 3D steps, parts list, voice and glasses preview. It has no
+camera scanning or AR; those are iPhone-only for now. To rebuild it after changing the
+model, run `cd web && npm install && npm run build`. `make_package.sh` also does this
+automatically.
 
 ## Run it on your iPhone and Mac
 

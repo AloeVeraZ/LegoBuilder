@@ -1,0 +1,15 @@
+{
+  "name": "buildlens-web",
+  "private": true,
+  "type": "module",
+  "description": "BuildLens for Windows (and any desktop browser): one self-contained HTML file.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

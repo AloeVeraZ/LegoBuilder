@@ -15,7 +15,7 @@ final class BuildScene {
     let root: ModelEntity
     private let turntable: Entity       // spins around the model's vertical axis
     private let content: Entity
-    private let arrow: Entity
+    private var arrows: [Entity] = []   // one bouncing arrow per new piece (up to 8)
     private var entities: [ModelEntity] = []
     private var meshes: [Int: MeshResource] = [:]
     private var materialCache: [String: RealityKit.Material] = [:]
@@ -35,12 +35,10 @@ final class BuildScene {
         root = ModelEntity()
         turntable = Entity()
         content = Entity()
-        arrow = Entity()
         root.name = "BuildRoot"
         root.addChild(turntable)
         turntable.addChild(content)
-        content.addChild(arrow)
-        buildArrow()
+        buildArrows()
     }
 
     /// Creates meshes and one entity per piece. Yields now and then so a progress bar can update.
@@ -111,8 +109,7 @@ final class BuildScene {
             entity.transform = Transform(matrix: model.instanceMatrices[i])
             entity.isEnabled = true
         }
-        arrow.stopAllAnimations()
-        arrow.isEnabled = false
+        for a in arrows { a.stopAllAnimations(); a.isEnabled = false }
         frame(assembly: model.package.assemblies[0])
         turntable.stopAllAnimations()
         turntable.transform = Transform()
@@ -190,48 +187,56 @@ final class BuildScene {
         }
     }
 
-    private func buildArrow() {
+    private func buildArrows() {
         let material = UnlitMaterial(color: PlatformColor(red: 1.0, green: 0.78, blue: 0.0, alpha: 1))
-        // Unit-sized arrow pointing down (-Y) with its tip at the entity origin.
-        let cone = ModelEntity(mesh: .generateCone(height: 0.6, radius: 0.32), materials: [material])
-        cone.orientation = simd_quatf(angle: .pi, axis: [1, 0, 0])
-        cone.position = [0, 0.3, 0]
-        let shaft = ModelEntity(mesh: .generateCylinder(height: 0.7, radius: 0.11), materials: [material])
-        shaft.position = [0, 0.95, 0]
-        arrow.addChild(cone)
-        arrow.addChild(shaft)
-        arrow.isEnabled = false
+        let coneMesh = MeshResource.generateCone(height: 0.6, radius: 0.32)
+        let shaftMesh = MeshResource.generateCylinder(height: 0.7, radius: 0.11)
+        for _ in 0 ..< 8 {
+            // Unit-sized arrow pointing down (-Y) with its tip at the entity origin.
+            let arrow = Entity()
+            let cone = ModelEntity(mesh: coneMesh, materials: [material])
+            cone.orientation = simd_quatf(angle: .pi, axis: [1, 0, 0])
+            cone.position = [0, 0.3, 0]
+            let shaft = ModelEntity(mesh: shaftMesh, materials: [material])
+            shaft.position = [0, 0.95, 0]
+            arrow.addChild(cone)
+            arrow.addChild(shaft)
+            arrow.isEnabled = false
+            content.addChild(arrow)
+            arrows.append(arrow)
+        }
     }
 
+    /// Puts a bouncing arrow above each new piece (pieces in the same spot share one).
     private func placeArrow(over ids: [Int], local: simd_float4x4) {
-        arrow.stopAllAnimations()
-        guard !ids.isEmpty else { arrow.isEnabled = false; return }
-        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        let size = max(framingRadius * 0.09, 0.004)
+        var spots: [SIMD3<Float>] = []
         for i in ids {
-            let (a, b) = pieceBounds(i, local)
-            lo = pointwiseMin(lo, a)
-            hi = pointwiseMax(hi, b)
+            let (lo, hi) = pieceBounds(i, local)
+            let tip = SIMD3<Float>((lo.x + hi.x) / 2, hi.y + size * 0.4, (lo.z + hi.z) / 2)
+            if !spots.contains(where: { simd_distance($0, tip) < size * 1.5 }) { spots.append(tip) }
         }
-        let size = max(framingRadius * 0.11, 0.004)
-        let tip = SIMD3<Float>((lo.x + hi.x) / 2, hi.y + size * 0.4, (lo.z + hi.z) / 2)
-        let base = Transform(scale: SIMD3(repeating: size), rotation: simd_quatf(angle: 0, axis: [0, 1, 0]), translation: tip)
-        arrow.transform = base
-        arrow.isEnabled = true
-        var up = base
-        up.translation += SIMD3(0, size * 0.6, 0)
-        let bob = FromToByAnimation<Transform>(
-            name: "bob",
-            from: base,
-            to: up,
-            duration: 0.55,
-            timing: .easeInOut,
-            isAdditive: false,
-            bindTarget: .transform,
-            repeatMode: .autoReverse
-        )
-        if let resource = try? AnimationResource.generate(with: bob) {
-            _ = arrow.playAnimation(resource.repeat())
+        for (k, arrow) in arrows.enumerated() {
+            arrow.stopAllAnimations()
+            guard k < spots.count else { arrow.isEnabled = false; continue }
+            let base = Transform(scale: SIMD3(repeating: size), rotation: simd_quatf(angle: 0, axis: [0, 1, 0]), translation: spots[k])
+            arrow.transform = base
+            arrow.isEnabled = true
+            var up = base
+            up.translation += SIMD3(0, size * 0.6, 0)
+            let bob = FromToByAnimation<Transform>(
+                name: "bob",
+                from: base,
+                to: up,
+                duration: 0.55,
+                timing: .easeInOut,
+                isAdditive: false,
+                bindTarget: .transform,
+                repeatMode: .autoReverse
+            )
+            if let resource = try? AnimationResource.generate(with: bob) {
+                _ = arrow.playAnimation(resource.repeat())
+            }
         }
     }
 
