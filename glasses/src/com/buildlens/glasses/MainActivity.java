@@ -167,6 +167,8 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         loadSteps();
         ghostModel = GhostModel.load(getAssets());
         prefs = getSharedPreferences("buildlens", MODE_PRIVATE);
+        // If the app was killed while it had the click sound muted, it still owes the unmute.
+        mutedClicks = prefs.getBoolean("mutedClicks", false);
         // The settings are the phone's now: built pieces shown (faded as the phone says), and
         // reading aloud off until the phone says otherwise (onSettings). With glasses linked
         // they read through their own speaker and the phone is quiet; a phone on its own reads.
@@ -259,6 +261,8 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
     }
 
     private static final int OUTLINE_MS = 12_000;
+    /** Logs a line for every sight of the code, for tools/axes.py. Off: it is about 15 lines a second. */
+    private static final boolean LOG_AXES = false;
 
     /** The start: look at the set's box (its barcode) with the glasses' camera. */
     private void startBox() {
@@ -388,7 +392,8 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
             spin = ghost.spin();
             legoSize = ghost.size();
             LinkService.sendView(spin, legoSize, ghost.tilt());
-            if (ghost.moving()) main.postDelayed(this, 33);
+            // (Its motion only runs down while it is drawn: not behind the menu, at the finish or paused.)
+            if (ghost.moving() && ghostOn && resumed) main.postDelayed(this, 33);
             else prefs.edit().putFloat("legoSize", legoSize).apply();
         }
     };
@@ -412,10 +417,12 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
     /** Shows one of the three screens. */
     private void showScreen(int which) {
         screen = which;
+        boolean wasBox = CameraFeed.lookForBox;
         CameraFeed.lookForBox = which == BOX;
         // The box screen wants the camera's bigger picture; the rest the quicker one.
         int width = which == BOX ? CameraFeed.BOX_WIDTH : 2048;
-        if (CameraFeed.maxWidth != width) {
+        // (The exposure is set when the camera starts: normal for the printed box, darker for the lit code.)
+        if (CameraFeed.maxWidth != width || wasBox != CameraFeed.lookForBox) {
             CameraFeed.maxWidth = width;
             if (resumed) startCamera();
         }
@@ -435,6 +442,9 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         super.onResume();
         resumed = true;
         LinkService.setListener(this);
+        // What the phone said while this screen was away.
+        if (LinkService.haveSettings) onSettings(LinkService.settingsFade, LinkService.settingsVoice, LinkService.settingsAloud);
+        if (LinkService.boxWaiting) { LinkService.boxWaiting = false; onBoxScanned(); }
         quietClicks(true);
         head.start();
         show();
@@ -442,10 +452,12 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         startCamera();
     }
 
+    private boolean askedCamera;
+
     private void startCamera() {
         if (testPicture != null) { camera.stop(); camera.startPicture(testPicture); return; }
         if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) camera.start();
-        else requestPermissions(new String[] {android.Manifest.permission.CAMERA}, 1);
+        else if (!askedCamera) { askedCamera = true; requestPermissions(new String[] {android.Manifest.permission.CAMERA}, 1); }
     }
 
     @Override
@@ -466,6 +478,8 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         shownStep = -1;                     // coming back draws the step afresh
         seatedStep = -1;
         main.removeCallbacks(resolveClicks);
+        main.removeCallbacks(endGesture);
+        main.removeCallbacks(followRun);
         main.removeCallbacks(allowSleep);
         clicks = 0;
         sawDoubleTap = false;
@@ -502,9 +516,9 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
                         100 * Math.hypot(Math.hypot(pose[12], pose[13]), pose[14])));
             }
             ghost.anchor(pose, at);
-            // For finding how the gyroscope sits against the camera (tools/axes.py).
-            double[] q = head.turnAt(time);
-            Log.i(TAG, String.format(java.util.Locale.US, "axes: %d %.6f %.6f %.6f %.6f %.5f %.5f %.5f %.5f %.5f %.5f %.5f %.5f %.5f",
+            // For finding how the gyroscope sits against the camera (tools/axes.py): set LOG_AXES.
+            double[] q = LOG_AXES ? head.turnAt(time) : null;
+            if (q != null) Log.i(TAG, String.format(java.util.Locale.US, "axes: %d %.6f %.6f %.6f %.6f %.5f %.5f %.5f %.5f %.5f %.5f %.5f %.5f %.5f",
                     time, q[0], q[1], q[2], q[3], pose[0], pose[4], pose[8], pose[1], pose[5], pose[9], pose[2], pose[6], pose[10]));
         }
         // Following the view, the LEGO shows the whole time while building (once placed).
@@ -543,7 +557,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         } else {
             frame.setLayoutParams(on ? cornerFrame() : new FrameLayout.LayoutParams(-1, -1));
         }
-        if (!on) wake();
+        if (!on) wake(); else if (ghost.moving()) followMotion();
     }
 
     /** The step picture's small place in the top right corner, below the glasses' status bar. */
@@ -1126,6 +1140,8 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
             }
             Log.i(TAG, "menu: " + menuValue(menuAt) + " for " + MENU[menuAt]);
             // The phone (through the Mac) changes the same setting.
+            LinkService.settingsFade = fadeBuilt; LinkService.settingsVoice = voicePrefix; LinkService.settingsAloud = switches[ALOUD];
+            LinkService.haveSettings = true;
             LinkService.sendSettings(fadeBuilt, voicePrefix, switches[ALOUD]);
             drawMenu();
             return;
@@ -1215,9 +1231,11 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
             if (quiet && !mutedClicks && !audio.isStreamMute(android.media.AudioManager.STREAM_MUSIC)) {
                 audio.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_MUTE, 0);
                 mutedClicks = true;
+                prefs.edit().putBoolean("mutedClicks", true).apply();
             } else if (!quiet && mutedClicks) {
                 audio.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_UNMUTE, 0);
                 mutedClicks = false;
+                prefs.edit().putBoolean("mutedClicks", false).apply();
             }
         } catch (Exception e) {
             Log.w(TAG, "click sound", e);
@@ -1259,8 +1277,13 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
 
     /** Moves the steps so this gesture has moved them `target` from where it began. */
     private void moveStepsTo(int target) {
-        for (int d = target - (LinkService.step - gestureFrom); d > 0; d--) next();
-        for (int d = target - (LinkService.step - gestureFrom); d < 0; d++) back();
+        for (int d = target - (place() - gestureFrom); d > 0; d--) next();
+        for (int d = target - (place() - gestureFrom); d < 0; d++) back();
+    }
+
+    /** Where the build is: the step, and one further once it is finished. */
+    private static int place() {
+        return LinkService.step + (LinkService.finished ? 1 : 0);
     }
 
     private void tapEvent(int count) {
@@ -1272,7 +1295,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         if (screen == BUILD && !menuOpen) {
             // A single tap acts at once (next step). A double tap waits to see if a third tap
             // follows, so a triple never moves the steps back and forth on its way.
-            if (clicks == 0) gestureFrom = LinkService.step;
+            if (clicks == 0) gestureFrom = place();
             clicks += count;
             main.removeCallbacks(endGesture);
             if (clicks >= 3) {

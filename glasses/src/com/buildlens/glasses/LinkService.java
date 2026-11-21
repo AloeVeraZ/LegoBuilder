@@ -66,6 +66,10 @@ public class LinkService extends Service {
     static volatile int view = -1;
     /** The phone is showing its "good job" card for this step; the next step follows. */
     static volatile boolean milestone = false;
+    /** The phone's settings as last heard (or as last set in the glasses' menu), and a "box"
+     *  that came while the screen was not in front: the screen takes them up when it is. */
+    static volatile boolean haveSettings, settingsFade, settingsAloud, boxWaiting;
+    static volatile String settingsVoice = "";
     private static volatile LinkService instance;
     private static volatile Listener listener;
 
@@ -241,12 +245,13 @@ public class LinkService extends Service {
             while ((line = r.readLine()) != null) {
                 JSONObject msg = new JSONObject(line);
                 if (msg.optBoolean("box", false)) {
-                    main.post(() -> { Listener l = listener; if (l != null) l.onBoxScanned(); });
+                    main.post(() -> { Listener l = listener; if (l != null) l.onBoxScanned(); else boxWaiting = true; });
                 }
                 if (msg.has("fade")) {
                     final boolean fade = msg.optBoolean("fade", false);
                     final String voice = msg.optString("voice", "");
                     final boolean aloud = msg.optBoolean("aloud", false);
+                    settingsFade = fade; settingsVoice = voice; settingsAloud = aloud; haveSettings = true;
                     main.post(() -> { Listener l = listener; if (l != null) l.onSettings(fade, voice, aloud); });
                     if (!msg.has("step")) continue;
                 }

@@ -23,7 +23,7 @@ struct HomeView: View {
                 .fullScreenCover(isPresented: Binding(
                     get: { app.markerRequested && presented == nil },
                     set: { if !$0 { app.markerRequested = false } }
-                )) { MarkerCard() }
+                )) { MarkerCard(keepAwake: app.keepAwake) }
         }
             // The glasses have placed the build: straight into the steps (once the code is away).
             .onChange(of: app.openInstructionsRequested) { _, wanted in

@@ -169,6 +169,9 @@ final class USBLink {
     private nonisolated static func muxSocket() -> Int32? {
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
+        // A write to a phone that has just been unplugged must fail, not end the app (SIGPIPE).
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let path = "/var/run/usbmuxd"
@@ -217,7 +220,7 @@ final class USBLink {
             let line = rest[rest.startIndex ..< newline]
             rest = Data(rest[rest.index(after: newline)...])
             if !line.isEmpty {
-                linkLog.info("usb in: \(String(decoding: line, as: UTF8.self), privacy: .public)")
+                linkLog.debug("usb in: \(String(decoding: line, as: UTF8.self), privacy: .public)")
                 onLine?(Data(line))
             }
         }

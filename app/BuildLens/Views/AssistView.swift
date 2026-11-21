@@ -263,6 +263,8 @@ final class GhostCache {
 /// and the glasses' camera finds it.
 struct MarkerCard: View {
     @Environment(\.dismiss) private var dismiss
+    /// Decides whether the screen stays on once the marker is away (it does while linked).
+    var keepAwake: KeepAwake?
     /** The screen's brightness before the marker went up, to put back. */
     @State private var brightness: CGFloat?
 
@@ -302,6 +304,7 @@ struct MarkerCard: View {
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+            keepAwake?.refresh()
             if let brightness { UIScreen.main.brightness = brightness }
         }
     }

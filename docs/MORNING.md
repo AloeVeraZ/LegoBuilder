@@ -31,8 +31,8 @@ and tells you exactly what is missing if it can't.
 BuildLens is also installed on this Mac: open **BuildLens** from the Desktop shortcut,
 Launchpad or Spotlight. The big **Open** tile starts the instructions; **Glasses preview**
 opens a separate window that shows what the glasses show and follows the step you are on.
-The Mac does not link to the glasses (only the phone does), but it does follow the phone's
-step when both are on the same Wi-Fi. After changing the app, `app/install-mac.sh` updates
+The Mac links to glasses plugged into it by USB and to the phone (Wi-Fi or its cable), and
+passes steps, settings and the view between them, so no Wi-Fi is needed. After changing the app, `app/install-mac.sh` updates
 the installed copy.
 
 ## 2. Put BuildLens on the glasses (about 5 minutes)
@@ -133,5 +133,5 @@ Not verified, because it needs the real hardware:
 
 ## Submitting
 
-The code is at https://github.com/AloeVeraZ/LegoBuilder on the branch `aloe/glasses-demo`.
+The code is at https://github.com/AloeVeraZ/LegoBuilder on the branch `main`.
 The MicroLumin kit is confidential: nothing from it is in the repo, and it should stay that way.

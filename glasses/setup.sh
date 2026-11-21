@@ -69,4 +69,4 @@ if $lineup_only || ! a shell "test -s /sdcard/Android/data/$APP/files/lined-up" 
     done
 fi
 
-say "Done. Lay the phone with the marker on the table and look at it: the next piece shows in green, right of the phone."
+say "Done. The step's pieces show in green in the middle of your view."

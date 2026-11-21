@@ -14,18 +14,16 @@ a sub-build) and the pieces to add.
 - **Stays on.** Closing the phone app does not close the glasses; they keep their step.
 - **Both ways.** A step changed on the phone shows on the glasses and the other way round.
 - **Start: scan the box.** The app opens on "scan the box": hold the barcode on the set's
-  box (6 73419 42442 4) in front of the glasses. It is read with ZXing (libs/, Apache 2.0)
-  on the glasses' own camera, any way up. Hold the touchpad to skip it. The phone and Mac
-  apps start the same way, with their own cameras (barcode, item number 6588582 or set
-  number 42233; BuildConfig.swift).
+  box (6 73419 42442 4) with the phone (barcode, item number 6588582 or set number 42233;
+  BuildConfig.swift), which tells the glasses. The glasses also try with their own camera
+  (ZXing, libs/, Apache 2.0), and seeing the phone's code counts too. Hold the touchpad to
+  skip it. The Mac does not scan; it passes the news on.
 - **Then: scan the phone.** Next comes the scan: a circle in the middle and "put the
   code on your phone in the circle, then tap". On the iPhone: Instructions › ••• › Table
   marker (the glasses also ask the phone to put it up by itself, `"scan": true` on the link,
   once phone and glasses are linked over Wi-Fi). Look so the code sits in the circle and
-  tap: that finds the phone and lines the camera up with this wearer's eye in one go. For
-  12 s the code's outline shows in green over the real one; swipe to make it bigger or
-  smaller until it matches (remembered). Double tap while scanning: the start screen (the
-  set, as on the phone's home; tap to scan).
+  tap (any tap counts while scanning): that finds the phone and lines the camera up with
+  this wearer's eye in one go. With no tap for two minutes the scan starts again by itself.
 - **Build.** The green LEGO sits in the middle of the view and follows the head
   (GhostView.FOLLOW_VIEW; the phone's code is still tracked, for putting it on the table
   later). Each new step turns it to the side the phone app shows that step from. The step
@@ -40,9 +38,10 @@ a sub-build) and the pieces to add.
   glasses move the phone's 3D view, and turning or pinching on the phone (3D, or turning in
   AR) moves the glasses, about 30 times a second. Phone and Mac talk over Wi-Fi or the USB
   cable (USBLink, through macOS's usbmuxd); the Mac talks to the glasses over USB (adb).
-- **Menu**: Show built pieces, Read steps aloud (the two switches, as on the phone, and
-  remembered), Scan phone again, Replay step, Start over. Swipe to move, tap to switch or
-  do, double tap to go back to the LEGO; it closes by itself after 20 s.
+- **Menu**: Fade built pieces, Read steps aloud, Voice (the phone's settings: a change on
+  either goes to the other), Scan phone again, Replay step. No Start over on the glasses.
+  Swipe to move, tap to switch or do, double tap to go back to the LEGO; it closes by
+  itself after 20 s, and opening it stops the voice.
 - **Sound.** The M6 clicks on every touchpad gesture (the system does it, on the media
   channel). While BuildLens is open that channel is muted and put back afterwards; Read
   steps aloud plays on the alarm channel instead.
@@ -75,14 +74,13 @@ bottom of `MainActivity.java`.
 
 ## The ghost
 
-With the phone lying on the table showing its marker (iPhone: Instructions › ••• › Table
-marker), the glasses' camera finds it and the step pictures give way to the step's pieces
-drawn in green right where they go: the build stands on the phone's
-code, what is already built shows faintly, and the new pieces go in one after another, as
-on the phone. Look away from the phone and the step pictures come back. Clicks work the
-same either way.
+Once the phone's code has been scanned, the step's pieces are drawn in green in the middle
+of the view and stay there as the head turns (`GhostView.FOLLOW_VIEW`): what is already
+built shows faintly, and the new pieces go in one after another, as on the phone. The
+code's place on the table is still tracked (camera plus gyroscope), for standing the build
+on the table later; with `FOLLOW_VIEW` off the build stands on the code instead.
 
-How it works: `CameraFeed` takes the camera picture (Camera2, up to 1280 wide, about 15
+How it works: `CameraFeed` takes the camera picture (Camera2, up to 2048 wide, about 15
 searches a second), `QrFinder` finds the marker by its three big squares and the small
 one, checks all 27 × 27 cells against the known picture, and `MarkerRefine` fits the whole
 picture to the camera image to a fraction of a pixel. `MarkerPose` turns that into where

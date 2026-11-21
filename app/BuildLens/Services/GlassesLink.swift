@@ -29,6 +29,10 @@ final class GlassesLink {
     private var buffer = Data()
     private var last: (step: Int, finished: Bool)?
     private var retryScheduled = false
+    /// The glasses have greeted us on this connection. Only then are they reported as linked:
+    /// through `adb forward` a connection opens (and closes again) even when nothing on the
+    /// glasses is listening.
+    private var greeted = false
 
     func start() {
         guard browser == nil else { return }
@@ -132,7 +136,6 @@ final class GlassesLink {
     private func stateChanged(_ state: NWConnection.State) {
         switch state {
         case .ready:
-            onConnectionChange?(true)
             // With the instructions open the phone leads: the glasses get our step. Otherwise
             // we wait for their greeting and keep our place in line with theirs.
             if instructionsOpen, let last { send(step: last.step, finished: last.finished) }
@@ -183,6 +186,7 @@ final class GlassesLink {
             let line = buffer[buffer.startIndex ..< newline]
             buffer.removeSubrange(buffer.startIndex ... newline)
             if let message = try? JSONDecoder().decode(Message.self, from: Data(line)) {
+                if !greeted { greeted = true; onConnectionChange?(true) }
                 if let spin = message.spin {
                     onRemoteView?(spin, message.zoom, message.tilt)
                     continue
@@ -192,13 +196,14 @@ final class GlassesLink {
                     onSettings?(fade, message.voice ?? "", message.aloud ?? false)
                     continue
                 }
-                if message.scan == true { onScanRequest?() }
                 if message.box == true { onBoxScanned?() }
                 if message.hello == true {
                     onHello?(message.step, message.finished ?? false)
                 } else {
                     onRemoteStep?(message.step, message.finished ?? false, message.replay ?? false)
                 }
+                // After the step: the request rides on a step line, and a step alone means "building".
+                if message.scan == true { onScanRequest?() }
             }
         }
     }
@@ -209,7 +214,7 @@ final class GlassesLink {
         connection?.cancel()
         connection = nil
         buffer.removeAll()
-        onConnectionChange?(false)
+        if greeted { greeted = false; onConnectionChange?(false) }
         // Try again shortly (the glasses app may have restarted).
         guard !retryScheduled else { return }
         retryScheduled = true

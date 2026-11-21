@@ -128,7 +128,7 @@ final class GlassesFeed {
                     guard let end = buffer.firstIndex(of: UInt8(ascii: "\n")) else { break }
                     let line = buffer[buffer.startIndex ..< end]
                     buffer = Data(buffer[buffer.index(after: end)...])
-                    guard let parsed = try? JSONDecoder().decode(Header.self, from: line) else { return }
+                    guard let parsed = try? JSONDecoder().decode(Header.self, from: line), parsed.jpeg >= 0, parsed.jpeg <= 8_000_000 else { return }
                     header = parsed
                 }
                 guard let head = header, buffer.count >= head.jpeg else { break }

@@ -9,7 +9,8 @@ every picture. This tries all 24 square turns and prints how well each holds sti
 
     adb logcat -d -s BuildLens | python3 glasses/tools/axes.py
 
-Turn the head slowly while looking at the code for ten seconds or so first.
+Turn the head slowly while looking at the code for ten seconds or so first. The lines are only
+logged by a build with MainActivity.LOG_AXES set to true.
 """
 import itertools
 import math

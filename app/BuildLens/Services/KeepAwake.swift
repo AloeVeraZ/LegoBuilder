@@ -35,6 +35,9 @@ final class KeepAwake {
         update()
     }
 
+    /// Something else changed the screen's stay-awake (the Table marker closing): as it should be again.
+    func refresh() { update() }
+
     private func update() {
         // Screen on while linked (the phone is part of the build).
         UIApplication.shared.isIdleTimerDisabled = linked || Date().timeIntervalSince(lastTouch) < 300
@@ -77,6 +80,7 @@ final class KeepAwake {
     }
     #else
     func touch() {}
+    func refresh() {}
     private func update() {}
     #endif
 }

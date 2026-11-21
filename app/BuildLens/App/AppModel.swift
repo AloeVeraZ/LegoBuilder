@@ -74,7 +74,7 @@ final class AppModel {
     /// the other one.
     private func remoteView(spin: Double, zoom: Double?, tilt: Double?, fromGlasses: Bool) {
         keepAwake.touch()
-        linkLog.info("view from \(fromGlasses ? "glasses" : "phone", privacy: .public): spin \(spin) zoom \(zoom ?? -1)")
+        linkLog.debug("view from \(fromGlasses ? "glasses" : "phone", privacy: .public): spin \(spin) zoom \(zoom ?? -1)")
         modelSpin = spin
         if let zoom { modelZoom = zoom }
         if let tilt { modelTilt = tilt }
@@ -91,7 +91,7 @@ final class AppModel {
             self.lastViewSent = Date()
             if toPhone { self.sync.sendView(spin: self.modelSpin, zoom: self.modelZoom, tilt: self.modelTilt) }
             if toGlasses {
-                linkLog.info("view to glasses: spin \(self.modelSpin) zoom \(self.modelZoom)")
+                linkLog.debug("view to glasses: spin \(self.modelSpin) zoom \(self.modelZoom)")
                 self.glasses.sendView(spin: self.modelSpin, zoom: self.modelZoom, tilt: self.modelTilt)
             }
         }

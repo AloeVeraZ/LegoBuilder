@@ -27,6 +27,8 @@ final class BoxScanner: NSObject {
         state = .starting
         AVCaptureDevice.requestAccess(for: .video) { granted in
             Task { @MainActor in
+                // Stopped while the permission question was up: stay off.
+                guard self.state == .starting else { return }
                 guard granted, self.configure() else { self.state = .noCamera; return }
                 self.state = .looking
                 self.queue.async { [session = self.session] in session.startRunning() }

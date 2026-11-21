@@ -3,6 +3,30 @@
 Written 2026-11-21 for whoever picks this up next. Read this first, then `docs/MORNING.md`
 (setup checklist) and `glasses/README.md`.
 
+## Where things stand (2026-11-21, after the merge to `main`)
+
+Everything is on **`main`** (`aloe/glasses-demo` and `ghost-piece` are merged into it). The
+sections below were written before the glasses arrived and are out of date where they
+disagree with this list; `glasses/README.md` is the current description of the glasses app.
+
+- The glasses app **runs on the real M6**. Flow: scan the set's box (phone), scan the
+  phone's code with the glasses, then the green LEGO sits in the middle of the view and
+  follows the head (`GhostView.FOLLOW_VIEW`). Tap = next, double tap = back, triple tap =
+  flicks zoom, flick = turn, hold = menu (fade, read aloud, voice, scan again, replay).
+- **No Wi-Fi is needed.** The Mac is the bridge: glasses over USB (`adb forward`, ports
+  52733 link and 52734 live camera), phone over its cable (`USBLink`, usbmuxd, port 52735)
+  or Multipeer. The Mac app shows the glasses' live camera. Over Wi-Fi the phone still
+  finds the glasses by itself.
+- The link carries more than steps now: `scan`, `box`, `placed`, `spin`/`zoom`/`tilt`,
+  `fade`/`voice`/`aloud` (see `LinkService.java`, `GlassesLink.swift`, `PeerSync.swift`).
+- The marker is 67.9 mm across; the build no longer stands 11 cm right of it.
+- The M6 runs hot with the camera and 3D drawing on: forcing the display to full
+  brightness blanked it at about 98 °C, so brightness is left to the system.
+- Known gaps: finishing or replaying on the phone does not reach the glasses through the
+  Mac (only step numbers cross it), and the other way round; the gyroscope's axes against
+  the camera are unverified (`tools/axes.py`); the planned next feature is re-localising on
+  the code and standing the build on the table beside the phone.
+
 ## What this is
 
 BuildLens shows LEGO building instructions in 3D on an iPhone and on **MicroLumin M6**
@@ -20,26 +44,22 @@ City Tech NYC, team Superpog).
 - The MicroLumin SDK kit is **confidential**: never commit kit files, never put them in a
   public link. The glasses app deliberately does not use the SDK.
 
-## The user
+## Design rules (already applied; keep to them)
 
-- New to Xcode and Android tooling. Give click-by-click steps naming exact buttons and menus.
-- Dictates by voice, so messages are loose; work out the intent and act. They often say
-  "don't ask, do what's best". Still ask before downloads, and say plainly when something
-  cannot be done or has not been tested.
-- Strong UI opinions, all already applied; keep to them:
-  - No explainer or "how it works" text anywhere. It must be obvious without reading.
-  - Only things that can be pressed may look like buttons.
-  - Animation: the grounded piece and camera stay still; the waiting piece stays still and
-    only its arrow bounces; a piece goes in over about half a second; motion only straight
-    down or straight in from a side (90° only); nothing clips through anything; no click sound.
-  - The model must be physically right (pins seated, shapes match holes) and look like the
-    real LEGO set.
-- They test on a real **iPhone 18 Pro Max** ("Aloe Iphone") plugged into the Mac, and send
-  screenshots. AR cannot run in the simulator, so AR changes are only ever verified by them.
+- No explainer or "how it works" text anywhere. It must be obvious without reading.
+- Only things that can be pressed may look like buttons.
+- Animation: the grounded piece and camera stay still; the waiting piece stays still and
+  only its arrow bounces; a piece goes in over about half a second; motion only straight
+  down or straight in from a side (90° only); nothing clips through anything; no click sound.
+- The model must be physically right (pins seated, shapes match holes) and look like the
+  real LEGO set.
+- No skip button on the phone's box scan; no Start over on the glasses; the phone's pinch
+  and pan are right as they are.
+- AR cannot run in the simulator, so AR changes are only ever verified on the real iPhone.
 
 ## Machine setup (already done on this Mac)
 
-- Xcode 27.2, signed in with a free Personal Team (`7SZQGAT2TZ`); the phone app expires 7
+- Xcode 27.2, signed in with a free Personal Team; the phone app expires 7
   days after each install. Bundle id `com.aloeveraz.buildlens`.
 - Homebrew: `adb`, `openjdk@17`, `android-commandlinetools`, `xcodegen`, `poppler`, node.
 - Android SDK at `/opt/homebrew/share/android-commandlinetools` (platform 34, build-tools
