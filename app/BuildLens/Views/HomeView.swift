@@ -47,41 +47,25 @@ struct HomeView: View {
 
     // MARK: layouts
 
-    /// iPhone and narrow windows: one scrolling column, the main action pinned at the bottom.
+    /// iPhone and narrow windows: one fixed page that fits the screen, nothing to scroll.
+    /// The picture takes whatever height is left over; the two things to press sit
+    /// together at the bottom, instructions first.
     private func compactLayout(height: CGFloat) -> some View {
-        ScrollView {
-            VStack(spacing: Theme.Spacing.sm) {
-                header
-                hero(headlineSize: headlineSize)
-                    .frame(height: Theme.Size.heroHeight(in: height))
-                facts
-                    .fixedSize(horizontal: false, vertical: true)
-                shortcuts
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, Theme.Spacing.md)
-            .padding(.top, Theme.Spacing.xs)
-            .padding(.bottom, Theme.Spacing.md)
-            .frame(maxWidth: Theme.Size.contentWidth)
-            .frame(maxWidth: .infinity)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        VStack(spacing: Theme.Spacing.sm) {
+            header
+            hero(headlineSize: headlineSize)
+                .frame(maxHeight: .infinity)
+            facts
+                .fixedSize(horizontal: false, vertical: true)
+            shortcuts
+                .frame(height: min(max(height * 0.2, 132), 176))
             primaryAction
-                .frame(maxWidth: Theme.Size.contentWidth)
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.top, Theme.Spacing.md)
-                .padding(.bottom, Theme.Spacing.xs)
-                .frame(maxWidth: .infinity)
-                .background {
-                    // Content fades out under the pinned button instead of being cut off.
-                    LinearGradient(
-                        colors: [Theme.Palette.canvas.opacity(0), Theme.Palette.canvas],
-                        startPoint: .top,
-                        endPoint: .center
-                    )
-                    .ignoresSafeArea(edges: .bottom)
-                }
         }
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.top, Theme.Spacing.xs)
+        .padding(.bottom, Theme.Spacing.xs)
+        .frame(maxWidth: Theme.Size.contentWidth)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// Mac and iPad: the hero on the left, the bento grid and the main action in a column

@@ -107,6 +107,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
         app.viewCube.onDrag = { [weak self] moved, began in self?.cubeDragged(moved, began: began) }
         app.viewCube.onLook = { [weak self] direction, up in self?.look(from: direction, up: up) }
+        app.viewCube.onNudge = { [weak self] across, down in self?.nudge(across: across, down: down) }
         app.viewCube.onHome = { [weak self] in self?.goHome() }
 
         // Coming back from the 3D view mid-build: put the model in front of the camera.
@@ -276,6 +277,18 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         let wanted = simd_normalize(anchorTurn.inverse * view.cameraTransform.rotation * toScreen)
         glide = Glide(fromTurn: root.orientation, toTurn: wanted, fromScale: root.scale.x, toScale: root.scale.x,
                       fromCentre: pivot, toCentre: pivot, duration: 0.6, endsAtRest: false)
+        tumbled = true
+    }
+
+    /// The arrows round the cube: a sixth of a turn (30 degrees) that way, as you see it.
+    private func nudge(across: Int, down: Int) {
+        guard anchor != nil, let root = app.scene?.root, let axes = cameraAxes() else { return }
+        let from = glide?.toTurn ?? root.orientation      // taps in a row add up
+        beginPivot(root, onGround: false)
+        let step = Float.pi / 6
+        let turn = simd_quatf(angle: Float(across) * step, axis: axes.up) * simd_quatf(angle: Float(down) * step, axis: axes.right)
+        glide = Glide(fromTurn: root.orientation, toTurn: simd_normalize(turn * from), fromScale: root.scale.x, toScale: root.scale.x,
+                      fromCentre: pivot, toCentre: pivot, duration: 0.3, endsAtRest: false)
         tumbled = true
     }
 
