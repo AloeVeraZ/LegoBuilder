@@ -178,12 +178,15 @@ front_unit = model("Front Unit.ldr", [
      ref(BLK, (0, FB_Y + 10, RB2_Z - 25), SHAFT_Z, "32062.dat")],                                # 12
 ])
 
+# Cab sub-build (steps 14-15) is the REAR half: frame facing backwards, with the 3/4 pin
+# and two axles pointing forward. Step 17's frame is the front half and slides onto them.
+BEHIND = rot(-X, Y)          # turned 180 degrees
 cab = model("Cab.ldr", [
-    [ref(YEL, (0, 0, 0), FRAME, "7944.dat"), ref(TAN, (0, 0, 10), rot(Z, Y), "32002.dat")],      # 14
-    [ref(BLK, (-20, 0, 15), SHAFT_Z, "32062.dat"), ref(BLK, (20, 0, 15), SHAFT_Z, "32062.dat")], # 15
+    [ref(YEL, (0, 0, 0), BEHIND, "7944.dat"), ref(TAN, (0, 0, -10), rot(-Z, Y), "32002.dat")],   # 14
+    [ref(BLK, (-20, 0, -20), SHAFT_Z, "32062.dat"), ref(BLK, (20, 0, -20), SHAFT_Z, "32062.dat")], # 15
 ])
-CAB_POS = (0, -46, -68)
-BEHIND = rot(-X, Y)          # turned 180 degrees: the second frame faces backwards
+CAB_FRONT = (0, -46, -68)
+CAB_POS = (0, -46, -8)
 
 # one side of the tipper bed: front panel + rear panel joined by an axle, hinge axle in front
 bed_half = model("Tipper Bed Half.ldr", [
@@ -196,7 +199,7 @@ BED_Y, BED_Z = -66, 40
 main = model("42233-3 Dump Truck.ldr", rear + [
     [ref(16, (0, 0, 0), I, "Front Unit.ldr")],                                                   # 13
     [ref(16, CAB_POS, I, "Cab.ldr")],                                                            # 16 (after cab sub-build)
-    [ref(YEL, (CAB_POS[0], CAB_POS[1], CAB_POS[2] + 60), BEHIND, "7944.dat")],                   # 17
+    [ref(YEL, CAB_FRONT, FRAME, "7944.dat")],                                                    # 17
     [ref(YEL, (0, -52, 5), LBEAM, "32140.dat"),
      ref(BLK, (0, AXLE_Y - 22, 40), SHAFT_X, "32062.dat")],                                      # 18
     [ref(16, (0, BED_Y, BED_Z), I, "Tipper Bed Half.ldr"),
