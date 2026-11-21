@@ -16,6 +16,32 @@ struct GlassesPreview: View {
     /// Live: the camera's picture with the step drawn onto the real table.
     @State private var live = false
     @State private var tracker = MarkerTracker()
+    #if os(macOS)
+    /// The real glasses' camera, while they are plugged into this Mac.
+    @State private var glasses = GlassesFeed()
+    #endif
+
+    /// True while the live view shows the plugged-in glasses' camera.
+    private var glassesLive: Bool {
+        #if os(macOS)
+        return live && glasses.plugged
+        #else
+        return false
+        #endif
+    }
+
+    /// The live view's camera: the plugged-in glasses', else this device's own.
+    private var liveCamera: any LiveCamera {
+        #if os(macOS)
+        if glasses.plugged { return glasses }
+        #endif
+        return tracker
+    }
+
+    /// Only the Mac's own camera needs starting; the glasses' runs on the glasses.
+    private func updateTracker() {
+        if live && !glassesLive { tracker.start() } else { tracker.stop() }
+    }
 
     /// When the confetti went off (nil = none).
     @State private var confetti: Date?
@@ -123,7 +149,11 @@ struct GlassesPreview: View {
                 }
                 Spacer(minLength: Theme.Spacing.xs)
                 #if os(macOS)
-                // The Mac's camera stands in for the camera on the glasses.
+                StatusChip(symbol: "cable.connector", text: glasses.plugged ? "Glasses plugged in" : "No glasses",
+                           tint: glasses.plugged ? Theme.Palette.green : Theme.Palette.textSecondary)
+                StatusChip(symbol: "iphone", text: app.syncPeers.isEmpty ? "No phone" : "Phone linked",
+                           tint: app.syncPeers.isEmpty ? Theme.Palette.textSecondary : Theme.Palette.green)
+                // The plugged-in glasses' camera, or the Mac's standing in for it.
                 Button {
                     live.toggle()
                 } label: {
@@ -162,7 +192,7 @@ struct GlassesPreview: View {
         ZStack {
             Color.black
             if live {
-                AssistView(tracker: tracker)
+                AssistView(tracker: liveCamera)
             } else if let url = frameURL, let image = ImageCache.shared.image(at: url) {
                 Image(platformImage: image)
                     .resizable()
@@ -183,7 +213,16 @@ struct GlassesPreview: View {
         // glasses play: the last piece slots in, then the new one waits with a bouncing arrow.
         .task(id: Playing(step: app.step, finished: app.showingFinished, view: app.glassesView,
                           milestone: app.milestone != nil, seating: app.isSeating)) { await play() }
-        .onChange(of: live) { _, on in if on { tracker.start() } else { tracker.stop() } }
+        .onChange(of: live) { updateTracker() }
+        #if os(macOS)
+        // Plugging the glasses in brings their camera up straight away.
+        .onChange(of: glasses.plugged) { _, plugged in
+            if plugged { live = true }
+            updateTracker()
+        }
+        .onAppear { glasses.start() }
+        .onDisappear { glasses.stop() }
+        #endif
         .onDisappear { tracker.stop(); live = false }
         .clipShape(Theme.shape(Theme.Radius.tile))
         .overlay {
@@ -196,20 +235,39 @@ struct GlassesPreview: View {
         .system(size: size * scale, weight: weight, design: .monospaced)
     }
 
+    /// The step the text shows: the plugged-in glasses' while their camera is up, else the app's.
+    private var shownStepIndex: Int {
+        #if os(macOS)
+        if glassesLive { return glasses.step }
+        #endif
+        return app.step
+    }
+
+    private var shownFinished: Bool {
+        #if os(macOS)
+        if glassesLive { return glasses.finished }
+        #endif
+        return app.showingFinished
+    }
+
     private func overlay(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs * scale) {
-            if app.showingFinished {
+        let steps = app.model?.steps ?? []
+        let index = min(max(shownStepIndex, 0), max(steps.count - 1, 0))
+        let current = steps.isEmpty ? nil : steps[index]
+        let milestone = glassesLive ? nil : app.milestone
+        return VStack(alignment: .leading, spacing: Theme.Spacing.xs * scale) {
+            if shownFinished {
                 Label("DONE", systemImage: "checkmark")
                     .font(hudFont(40, weight: .bold, scale: scale))
-            } else if let milestone = app.milestone {
+            } else if let milestone {
                 Text(milestone.title.uppercased())
                     .font(hudFont(36, weight: .bold, scale: scale))
                 Text(milestone.detail.uppercased())
                     .font(hudFont(22, weight: .semibold, scale: scale))
             } else {
-                Text("STEP \(app.step + 1)/\(app.stepCount)")
+                Text("STEP \(index + 1)/\(app.stepCount)")
                     .font(hudFont(36, weight: .bold, scale: scale))
-                if let step = app.currentStep {
+                if let step = current {
                     Text(step.isSubAssembly
                          ? "SUB: \(step.assembly.name.uppercased())\(step.assembly.uses > 1 ? " ×\(step.assembly.uses)" : "")"
                          : "MAIN BUILD")

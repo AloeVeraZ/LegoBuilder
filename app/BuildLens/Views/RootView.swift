@@ -10,7 +10,18 @@ struct RootView: View {
             } else if app.model == nil {
                 loading
             } else {
-                HomeView()
+                #if os(macOS)
+                // The Mac is the screen in the middle: the glasses' live view, while it passes
+                // messages between the glasses (USB) and the phone. The phone does the inputs.
+                GlassesPreview()
+                #else
+                if !app.setScanned {
+                    // First of all: scan the set's box.
+                    BoxScanView()
+                } else {
+                    HomeView()
+                }
+                #endif
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -29,6 +29,8 @@ final class GhostModel {
         int builtCount, freshCount;      // corners
         int turns;
         float radius;
+        /** The middle of everything shown in the step (built and new, in place), model axes. */
+        float cx, cy, cz;
     }
 
     private final JSONArray steps;
@@ -54,8 +56,32 @@ final class GhostModel {
 
     int stepCount() { return steps.length(); }
 
-    /** Builds one step's triangles. */
+    /** Steps already built, and a thread that builds the neighbours ahead of time, so a tap
+     *  shows the next step at once instead of waiting for its triangles to be made. */
+    private final java.util.Map<Integer, Step> built = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ExecutorService ahead = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /** Builds steps index-1 and index+1 in the background. */
+    void prefetch(int index) {
+        for (int i : new int[] {index + 1, index - 1, index + 2}) {
+            if (i < 0 || i >= steps.length() || built.containsKey(i)) continue;
+            final int at = i;
+            ahead.execute(() -> step(at));
+        }
+    }
+
+    /** One step's triangles (built once, then kept). */
     Step step(int index) {
+        Step known = built.get(index);
+        if (known != null) return known;
+        Step made = make(index);
+        if (made != null) built.put(index, made);
+        return made;
+    }
+
+    private synchronized Step make(int index) {
+        Step known = built.get(index);
+        if (known != null) return known;
         try {
             JSONObject s = steps.getJSONObject(index);
             Step out = new Step();
@@ -70,11 +96,31 @@ final class GhostModel {
             for (int i = 0; i < fresh.length(); i++) add(out.fresh, fresh.getJSONObject(i), true);
             out.built.position(0);
             out.fresh.position(0);
+            middle(out);
             return out;
         } catch (Exception e) {
             Log.e(LinkService.TAG, "ghost step " + index, e);
             return null;
         }
+    }
+
+    /** The middle of the box around all the step's corners (positions are the first 3 of 10 floats). */
+    private static void middle(Step s) {
+        float[] lo = {Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE}, hi = {-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
+        FloatBuffer[] buffers = {s.built, s.fresh};
+        int[] counts = {s.builtCount, s.freshCount};
+        for (int which = 0; which < 2; which++) {
+            FloatBuffer b = buffers[which];
+            int n = counts[which];
+            for (int i = 0; i < n; i++)
+                for (int k = 0; k < 3; k++) {
+                    float v = b.get(i * FLOATS + k);
+                    if (v < lo[k]) lo[k] = v;
+                    if (v > hi[k]) hi[k] = v;
+                }
+        }
+        if (lo[0] > hi[0]) return;
+        s.cx = (lo[0] + hi[0]) / 2; s.cy = (lo[1] + hi[1]) / 2; s.cz = (lo[2] + hi[2]) / 2;
     }
 
     private int corners(JSONArray pieces) throws Exception {

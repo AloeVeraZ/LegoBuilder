@@ -27,6 +27,28 @@ final class OrbitController: NSObject {
     private var startYaw: Float = 0
     private var startPitch: Float = 0
     private var startDistance: Float = 0
+    /// The distance the step was framed at: zoom 1. Pinching in makes the zoom bigger.
+    private var fittedDistance: Float = 0.5
+
+    /// The user turned or zoomed the model by hand: (spin in degrees, the model's own turn as
+    /// seen, 0 = front towards you; zoom, 1 = as framed). Shared with the glasses and Mac.
+    /// The third value is the lean, in degrees seen from above (the camera's height).
+    var onUserTurn: ((Double, Double, Double) -> Void)?
+
+    /// Turned or zoomed on the glasses (or Mac): show it the same here, without echoing it back.
+    func apply(spin: Double, zoom: Double?, tilt: Double?) {
+        cameraGlide?.cancel()
+        // The camera going round to the right turns the model the other way as seen.
+        yaw = -Float(spin * .pi / 180)
+        if let tilt { pitch = min(max(Float(tilt * .pi / 180), -0.15), 1.45) }
+        if let zoom, zoom > 0 { distance = clampDistance(fittedDistance / Float(zoom)) }
+        update()
+    }
+
+    private func reportTurn() {
+        let spin = -Double(yaw) * 180 / .pi
+        onUserTurn?(spin, Double(fittedDistance / max(distance, 1e-4)), Double(pitch) * 180 / .pi)
+    }
     private var didSetUpScene = false
     private var cameraGlide: Task<Void, Never>?
 
@@ -88,6 +110,7 @@ final class OrbitController: NSObject {
     func zoom(by factor: Float) {
         distance = clampDistance(distance * factor)
         update()
+        reportTurn()
     }
 
     @objc func resetView() {
@@ -125,6 +148,7 @@ final class OrbitController: NSObject {
         if let newYaw { turn = atan2(sin(newYaw - yaw), cos(newYaw - yaw)) }
         cameraGlide?.cancel()
         let moved = simd_distance(centre, target) > 1e-5 || abs(fitted - distance) > 1e-5 || abs(turn) > 1e-3
+        fittedDistance = fitted
         guard animated, moved, !reduceMotion else {
             target = centre
             distance = fitted
@@ -209,15 +233,17 @@ final class OrbitController: NSObject {
         if g.state == .began { startYaw = yaw; startPitch = pitch; cameraGlide?.cancel() }
         if g.state == .ended { onUserView?(BuildModel.view(nearest: yaw)) }
         let t = g.translation(in: g.view)
-        yaw = startYaw - Float(t.x) * 0.008
-        pitch = min(max(startPitch + Float(t.y) * 0.008, -0.15), 1.45)
+        yaw = startYaw - Float(t.x) * 0.016
+        pitch = min(max(startPitch + Float(t.y) * 0.016, -0.15), 1.45)
         update()
+        reportTurn()
     }
 
     @objc private func pinch(_ g: UIPinchGestureRecognizer) {
         if g.state == .began { startDistance = distance }
         distance = clampDistance(startDistance / Float(max(g.scale, 0.05)))
         update()
+        reportTurn()
     }
     #else
     private func installInput(on view: ARView) {
@@ -232,15 +258,17 @@ final class OrbitController: NSObject {
         if g.state == .began { startYaw = yaw; startPitch = pitch; cameraGlide?.cancel() }
         if g.state == .ended { onUserView?(BuildModel.view(nearest: yaw)) }
         let t = g.translation(in: g.view)
-        yaw = startYaw - Float(t.x) * 0.008
-        pitch = min(max(startPitch - Float(t.y) * 0.008, -0.15), 1.45)
+        yaw = startYaw - Float(t.x) * 0.016
+        pitch = min(max(startPitch - Float(t.y) * 0.016, -0.15), 1.45)
         update()
+        reportTurn()
     }
 
     @objc private func magnify(_ g: NSMagnificationGestureRecognizer) {
         if g.state == .began { startDistance = distance }
         distance = clampDistance(startDistance / Float(max(1 + g.magnification, 0.05)))
         update()
+        reportTurn()
     }
     #endif
 }

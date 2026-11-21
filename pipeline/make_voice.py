@@ -18,6 +18,10 @@ DATA = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "app", "Bu
 CACHE = os.path.join(HERE, "voice-cache")
 VOICE_HOME = os.environ.get("BUILDLENS_VOICE", os.path.expanduser("~/Library/Caches/buildlens-voice"))
 VOICE, SPEED = "af_heart", 1.0
+# The voices to choose from in the app, by name: (Kokoro voice, speed, file prefix). The
+# first is the default (voice-<key>.m4a); the others get their name in the file name
+# (voice-onyx-<key>.m4a). Original voices only, not imitations of anyone.
+VOICES = [("heart", "af_heart", 1.0, ""), ("onyx", "am_onyx", 0.85, "onyx-")]
 
 # What people call the parts, not what the catalogue calls them.
 NAMES = {
@@ -143,8 +147,8 @@ def lines(pkg):
     return out
 
 
-def record(texts):
-    """Records any line that is not in the cache yet. Returns False if there is no voice model."""
+def record(texts, VOICE=VOICE, SPEED=SPEED):
+    """Records any line that is not in the cache yet, in one voice. Returns the cache key."""
     os.makedirs(CACHE, exist_ok=True)
     key = lambda t: hashlib.sha1(f"{VOICE}|{SPEED}|{t}".encode()).hexdigest()[:16]
     missing = [t for t in texts.values() if not os.path.exists(os.path.join(CACHE, key(t) + ".m4a"))]
@@ -175,17 +179,18 @@ def record(texts):
 def main():
     pkg = json.load(open(os.path.join(DATA, "build.json")))
     texts = lines(pkg)
-    key = record(texts)
     out = os.path.join(DATA, "voice")
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
     json.dump(texts, open(os.path.join(out, "voice.json"), "w"), indent=1)
     copied = 0
-    for name, text in texts.items():
-        clip = os.path.join(CACHE, key(text) + ".m4a")
-        if os.path.exists(clip):
-            shutil.copy(clip, os.path.join(out, f"voice-{name}.m4a"))
-            copied += 1
+    for _, voice, speed, prefix in VOICES:
+        key = record(texts, voice, speed)
+        for name, text in texts.items():
+            clip = os.path.join(CACHE, key(text) + ".m4a")
+            if os.path.exists(clip):
+                shutil.copy(clip, os.path.join(out, f"voice-{prefix}{name}.m4a"))
+                copied += 1
     print(f"voice: {len(texts)} lines, {copied} recordings -> {out}")
     for name, text in texts.items():
         print(f"  {name}: {text}")

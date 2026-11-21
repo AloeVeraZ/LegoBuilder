@@ -12,18 +12,26 @@ import android.view.View;
  * How the camera's picture sits over what the eye sees through the display.
  *
  * The camera and the eye are in different places, so a point the camera sees in the middle
- * of its picture is not in the middle of what the wearer sees. Lining up once fixes that:
- * a crosshair is shown in two places, and each time the wearer looks so that the phone's
- * marker sits under it and clicks. From where the camera saw the marker at those two
- * clicks comes the mapping (a turn, a size and a shift) from camera picture to display.
- * It is saved, so it is done once per glasses.
+ * of its picture is not in the middle of what the wearer sees. Lining up fixes that, in one
+ * click: a circle is shown in the middle of the display, the wearer looks so that the
+ * phone's marker sits in it and clicks. Where the camera saw the marker then gives the
+ * shift; the size comes from the display's assumed width of view (DISPLAY_F), and the
+ * wearer can grow or shrink it afterwards with swipes while the marker's outline shows
+ * (adjustSize). Two clicks at two places were tried first, but nobody could hold the
+ * marker in a small circle precisely enough for the size and turn to come out right.
+ * It is saved, and done again with every scan of the phone (it is part of scanning).
  *
  * Before any line-up the camera picture is taken to fill the display.
  */
 final class Lineup extends View {
     private static final String PREFS = "lineup";
     /** The two crosshairs, as parts of the display's width and height. */
-    private static final float[][] TARGETS = {{0.32f, 0.38f}, {0.68f, 0.64f}};
+    private static final float[][] TARGETS = {{0.5f, 0.5f}};
+    /** The display's focal length in its own pixels: about 17 degrees across 640, as found by
+     *  lining up on the M6 (the outline matched the real code at 1.545 x the camera's 1874). Put
+     *  right by the wearer with adjustSize(), which is remembered ("displayF2": an older saved
+     *  value was mixed up with making the LEGO bigger, and is left behind). */
+    private static final float DISPLAY_F = 2895f;
 
     /** Called when lining up ends: done, or given up after a while with no clicks. */
     interface Done { void onLineupEnded(boolean linedUp); }
@@ -54,7 +62,12 @@ final class Lineup extends View {
 
     boolean active() { return target >= 0; }
 
-    boolean linedUp() { return prefs.contains("ar"); }
+    /** Lined up, with a line-up that makes sense (one saved before that was checked may not). */
+    boolean linedUp() {
+        if (!prefs.contains("ar")) return false;
+        float size = (float) Math.hypot(prefs.getFloat("ar", 1), prefs.getFloat("ai", 0));
+        return size >= 0.1f && size <= 2.5f;
+    }
 
     void begin(Done done) {
         this.done = done;
@@ -85,6 +98,13 @@ final class Lineup extends View {
         seen[2 * target + 1] = centre[1];
         seenWidth = lens.width;
         Log.i(LinkService.TAG, "line-up: crosshair " + (target + 1) + " at camera " + centre[0] + "," + centre[1]);
+        if (TARGETS.length == 1) {
+            float w = getWidth(), h = getHeight();
+            float displayF = prefs.getFloat("displayF2", DISPLAY_F);
+            save(displayF / lens.fx, centre[0], centre[1], lens.fx, TARGETS[0][0] * w, TARGETS[0][1] * h, w, h);
+            end(true);
+            return;
+        }
         if (target == 0) { target = 1; invalidate(); return; }
         // a = (t2 - t1) / (c2 - c1) as complex numbers: the turn and size; then the shift.
         float w = getWidth(), h = getHeight();
@@ -99,12 +119,47 @@ final class Lineup extends View {
             return;
         }
         float ar = (tx * dx + ty * dy) / d, ai = (ty * dx - tx * dy) / d;
+        // Display pixels per camera pixel can only be about so much: the display covers a
+        // narrower view than the camera. Anything far off means a click came too early.
+        float size = (float) Math.hypot(ar, ai);
+        if (size < 0.1f || size > 2.5f) {
+            Log.i(LinkService.TAG, String.format(java.util.Locale.US, "line-up: size %.2f makes no sense; again", size));
+            target = 0;
+            missedAt = SystemClock.uptimeMillis();
+            invalidate();
+            return;
+        }
         float bx = t1x - (ar * seen[0] - ai * seen[1]), by = t1y - (ai * seen[0] + ar * seen[1]);
         prefs.edit().putFloat("ar", ar).putFloat("ai", ai).putFloat("bx", bx).putFloat("by", by)
                 .putInt("camera", seenWidth).putInt("w", (int) w).putInt("h", (int) h).apply();
         Log.i(LinkService.TAG, String.format(java.util.Locale.US, "line-up: done, size %.3f turn %.1f deg shift %.0f,%.0f",
                 Math.hypot(ar, ai), Math.toDegrees(Math.atan2(ai, ar)), bx, by));
         end(true);
+    }
+
+    /** Saves a line-up of size `size` (display pixels per camera pixel) through one point. */
+    private void save(float size, float sx, float sy, float fx, float tx, float ty, float w, float h) {
+        float bx = tx - size * sx, by = ty - size * sy;
+        prefs.edit().putFloat("ar", size).putFloat("ai", 0).putFloat("bx", bx).putFloat("by", by)
+                .putFloat("sx", sx).putFloat("sy", sy).putFloat("tx", tx).putFloat("ty", ty).putFloat("fx", fx)
+                .putFloat("displayF2", size * fx)
+                .putInt("camera", seenWidth).putInt("w", (int) w).putInt("h", (int) h).apply();
+        Log.i(LinkService.TAG, String.format(java.util.Locale.US, "line-up: done, size %.3f, shift %.0f,%.0f", size, bx, by));
+    }
+
+    /** A swipe after lining up: the green outline bigger or smaller, around the same middle. */
+    void adjustSize(float factor) {
+        if (!prefs.contains("sx")) return;
+        float size = prefs.getFloat("ar", 1) * factor;
+        if (size < 0.1f || size > 2.5f) return;
+        seenWidth = prefs.getInt("camera", seenWidth);
+        save(size, prefs.getFloat("sx", 0), prefs.getFloat("sy", 0), prefs.getFloat("fx", 1),
+                prefs.getFloat("tx", 0), prefs.getFloat("ty", 0), prefs.getInt("w", getWidth()), prefs.getInt("h", getHeight()));
+    }
+
+    /** Stops lining up without changing anything. */
+    void cancel() {
+        if (target >= 0) end(false);
     }
 
     private void end(boolean linedUp) {

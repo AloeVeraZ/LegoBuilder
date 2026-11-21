@@ -239,18 +239,29 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         guard let root = app.scene?.root, anchor != nil, app.arPhase != .scanning else { return }
         let moved = g.translation(in: g.view)
         if g.state == .began { beginPivot(root, onGround: false); lastDrag = .zero }
-        roll(root, across: moved.x - lastDrag.width, down: moved.y - lastDrag.height, perPoint: 0.008)
+        roll(root, across: moved.x - lastDrag.width, down: moved.y - lastDrag.height, perPoint: 0.016)
         lastDrag = CGSize(width: moved.x, height: moved.y)
+        reportTurn(root)
+    }
+
+    /// The model's turn as seen from the phone (its front's direction across the view), for
+    /// the glasses: they show it turned the same way.
+    private func reportTurn(_ root: Entity) {
+        guard let view else { return }
+        let seen = simd_normalize(view.cameraTransform.rotation.inverse * anchorTurn * root.orientation)
+        let front = seen.act(SIMD3<Float>(0, 0, 1))
+        app.userTurned(spin: Double(atan2(front.x, front.z)) * 180 / .pi, zoom: nil)
     }
 
     /// Two fingers twisting spin it like a dial, facing you.
     @objc private func twisted(_ g: UIRotationGestureRecognizer) {
         guard let root = app.scene?.root, anchor != nil, let axes = cameraAxes() else { return }
         if g.state == .began { beginPivot(root, onGround: false); lastTwist = 0 }
-        root.orientation = simd_normalize(simd_quatf(angle: -Float(g.rotation - lastTwist), axis: axes.back) * root.orientation)
+        root.orientation = simd_normalize(simd_quatf(angle: -2 * Float(g.rotation - lastTwist), axis: axes.back) * root.orientation)
         lastTwist = g.rotation
         holdPivot(root, onGround: false)
         tumbled = true
+        reportTurn(root)
     }
 
     // MARK: the view cube

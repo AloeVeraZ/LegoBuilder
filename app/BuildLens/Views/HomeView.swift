@@ -6,6 +6,7 @@ struct HomeView: View {
     @Environment(AppModel.self) private var app
     #if os(iOS)
     @State private var presented: BuildScreen.Mode?
+    @State private var showGlasses = false
     #else
     @State private var path: [BuildScreen.Mode] = []
     @Environment(\.openWindow) private var openWindow
@@ -15,7 +16,24 @@ struct HomeView: View {
 
     var body: some View {
         #if os(iOS)
-        NavigationStack { content }
+        NavigationStack {
+            content
+                // The glasses asked for the code from the home screen: put it up here. (With
+                // the instructions open, BuildScreen puts it up instead.)
+                .fullScreenCover(isPresented: Binding(
+                    get: { app.markerRequested && presented == nil },
+                    set: { if !$0 { app.markerRequested = false } }
+                )) { MarkerCard() }
+        }
+            // The glasses have placed the build: straight into the steps (once the code is away).
+            .onChange(of: app.openInstructionsRequested) { _, wanted in
+                guard wanted else { return }
+                app.openInstructionsRequested = false
+                Task {
+                    try? await Task.sleep(for: .seconds(0.7))
+                    if presented == nil { presented = .viewer }
+                }
+            }
             .fullScreenCover(item: $presented) { mode in
                 BuildScreen(initialMode: mode)
                     .environment(app)
@@ -109,6 +127,9 @@ struct HomeView: View {
                     .foregroundStyle(Theme.Palette.textPrimary)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 0)
+                #if os(iOS)
+                moreMenu
+                #endif
             }
             .frame(minHeight: Theme.Size.hitTarget)
 
@@ -123,6 +144,46 @@ struct HomeView: View {
             }
         }
     }
+
+    #if os(iOS)
+    /// The same ••• menu as in the instructions, here on the home screen too. Everything is
+    /// set up on the phone; the glasses just show the build.
+    private var moreMenu: some View {
+        Menu {
+            Group {
+                Toggle("Fade pieces already built", isOn: Binding(get: { app.focusMode }, set: { app.focusMode = $0 }))
+                Toggle("Read steps aloud", isOn: Binding(get: { app.readAloud }, set: { app.readAloud = $0 }))
+            }
+            .menuActionDismissBehavior(.disabled)
+            Picker(selection: Binding(get: { app.voiceName }, set: { app.voiceName = $0 })) {
+                ForEach(AppModel.voices, id: \.name) { Text($0.name).tag($0.name) }
+            } label: {
+                Label("Voice", systemImage: "waveform")
+            }
+            .pickerStyle(.menu)
+            Button {
+                Task { await app.voice.toggle() }
+            } label: {
+                Label(app.voice.isListening ? "Stop voice control" : "Voice control", systemImage: "mic")
+            }
+            Button { showGlasses = true } label: { Label("Glasses preview", systemImage: "eyeglasses") }
+            Button { app.markerRequested = true } label: { Label("Table marker", systemImage: "qrcode") }
+            Button { app.restart() } label: { Label("Start over", systemImage: "arrow.counterclockwise") }
+        } label: {
+            Image(systemName: "ellipsis")
+                .circleIcon(surface: .glass)
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .tint(Theme.Palette.textPrimary)
+        .accessibilityLabel("More options")
+        .sheet(isPresented: $showGlasses) {
+            GlassesPreview()
+                .environment(app)
+                .presentationDetents([.medium, .large])
+        }
+    }
+    #endif
 
     // MARK: hero
 
@@ -170,8 +231,8 @@ struct HomeView: View {
 
     // MARK: bento grid
 
-    /// What is in the box: plain text, not cards, so only the two things that can be
-    /// pressed (the instructions tile and the scan button) look like buttons.
+    /// What is in the box: plain text, not cards, so only the things that can be pressed
+    /// (the tiles) look like buttons.
     @ViewBuilder private var facts: some View {
         if let model = app.model {
             HStack(spacing: Theme.Spacing.lg) {
@@ -185,24 +246,39 @@ struct HomeView: View {
         }
     }
 
-    /// One way into the instructions. When the glasses are linked they show the same step
-    /// by themselves, so there is nothing separate to open for them.
+    /// The three things to do on the phone, side by side: scan the set's box, open the
+    /// instructions, put up the table marker for the glasses. On the Mac: the instructions.
     private var shortcuts: some View {
         HStack(spacing: Theme.Spacing.sm) {
             #if os(iOS)
             Button {
+                // Scan the box again; the table marker follows by itself, for the glasses.
+                app.setScanned = false
+            } label: {
+                BentoTile(eyebrow: "Set", value: "Scan", symbol: "camera.viewfinder", caption: "Then marker",
+                          fill: Theme.Palette.red, isAction: true)
+            }
+            .accessibilityLabel("Scan your set")
+            Button {
                 presented = .viewer
             } label: {
                 BentoTile(
-                    eyebrow: app.glassesConnected ? "Phone + glasses" : "Instructions",
+                    eyebrow: app.glassesConnected ? "Glasses" : "Steps",
                     value: "Open",
                     symbol: app.glassesConnected ? "eyeglasses" : "cube",
-                    caption: app.glassesConnected ? "Shows on your glasses too" : "Step by step in 3D",
+                    caption: "Step by step",
                     fill: app.glassesConnected ? Theme.Palette.green : Theme.Palette.yellow,
                     isAction: true
                 )
             }
             .accessibilityLabel(app.glassesConnected ? "Open instructions on phone and glasses" : "Open instructions")
+            Button {
+                app.markerRequested = true
+            } label: {
+                BentoTile(eyebrow: "Table", value: "Marker", symbol: "qrcode", caption: "For glasses",
+                          fill: Theme.Palette.blue, isAction: true)
+            }
+            .accessibilityLabel("Table marker")
             #else
             Button {
                 path.append(.viewer)
@@ -226,13 +302,8 @@ struct HomeView: View {
 
     @ViewBuilder private var primaryAction: some View {
         #if os(iOS)
-        Button {
-            app.beginScanning()
-            presented = .ar
-        } label: {
-            PillLabel(title: "Scan your set", systemImage: "camera.viewfinder")
-        }
-        .buttonStyle(PillButtonStyle(kind: .primary, height: Theme.Size.cta))
+        // The three tiles above are the actions on the phone.
+        EmptyView()
         #else
         // On the Mac the instructions are the big tile; this is the small extra.
         Button {

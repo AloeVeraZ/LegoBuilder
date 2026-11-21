@@ -14,6 +14,36 @@ final class PeerSync: NSObject {
 
     var onPeersChanged: (([String]) -> Void)?
     var onRemoteStep: ((Int) -> Void)?
+    /// Another device asks for the Table marker (the glasses are scanning; the Mac passes it on).
+    var onScanRequest: (() -> Void)?
+    /// Another device scanned the set's box.
+    var onBoxScanned: (() -> Void)?
+    /// The model was turned or zoomed on another device.
+    var onRemoteView: ((Double, Double?, Double?) -> Void)?
+
+    /// The glasses have placed the build (passed on by the Mac).
+    var onPlaced: (() -> Void)?
+
+    /// The phone's settings (passed on to the glasses by the Mac).
+    var onSettings: ((Bool, String?, Bool) -> Void)?
+    /// The Mac says whether glasses are plugged into it.
+    var onGlassesThroughMac: ((Bool) -> Void)?
+
+    func sendSettings(fade: Bool, voice: String, aloud: Bool) {
+        send(Message(fade: fade, voice: voice, aloud: aloud))
+    }
+
+    func sendGlassesPresent(_ present: Bool) {
+        send(Message(glasses: present))
+    }
+
+    func sendPlaced() {
+        send(Message(placed: true))
+    }
+
+    func sendView(spin: Double, zoom: Double?, tilt: Double?) {
+        send(Message(spin: spin, zoom: zoom, tilt: tilt))
+    }
 
     nonisolated(unsafe) private let me: MCPeerID
     nonisolated(unsafe) private let session: MCSession
@@ -22,7 +52,18 @@ final class PeerSync: NSObject {
     private var started = false
 
     private struct Message: Codable {
-        let step: Int
+        var step: Int?
+        var scan: Bool?
+        var box: Bool?
+        var spin: Double?
+        var zoom: Double?
+        var tilt: Double?
+        var placed: Bool?
+        var fade: Bool?
+        var voice: String?
+        var aloud: Bool?
+        /// The Mac: whether glasses are plugged into it.
+        var glasses: Bool?
     }
 
     /// `name` is how this device appears to the others; defaults to the device name.
@@ -44,29 +85,75 @@ final class PeerSync: NSObject {
         browser.delegate = self
     }
 
+    /// The phone and Mac over the USB cable as well (USBLink), for when there is no Wi-Fi.
+    private let usb = USBLink()
+    private var wirelessPeers: [String] = []
+
     func start() {
         guard !started else { return }
         started = true
         advertiser.startAdvertisingPeer()
         browser.startBrowsingForPeers()
+        usb.onLine = { [weak self] data in self?.deliver(data) }
+        usb.onConnectionChange = { [weak self] _ in self?.reportPeers() }
+        usb.start()
+    }
+
+    /// Who is linked: wireless peers, and the other end of the cable.
+    private func reportPeers() {
+        #if os(iOS)
+        let cable = "Mac (USB)"
+        #else
+        let cable = "iPhone (USB)"
+        #endif
+        onPeersChanged?(wirelessPeers + (usb.connected ? [cable] : []))
     }
 
     func send(step: Int) {
-        guard !session.connectedPeers.isEmpty, let data = try? JSONEncoder().encode(Message(step: step)) else { return }
+        send(Message(step: step))
+    }
+
+    /// Asks the others to put the Table marker up.
+    func sendScanRequest() {
+        send(Message(scan: true))
+    }
+
+    /// Tells the others the set's box was scanned here.
+    func sendBoxScanned() {
+        send(Message(box: true))
+    }
+
+    private func send(_ message: Message) {
+        guard let data = try? JSONEncoder().encode(message) else { return }
+        usb.send(data)
+        guard !session.connectedPeers.isEmpty else { return }
         try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+    }
+
+    /// A message from either link.
+    nonisolated private func deliver(_ data: Data) {
+        guard let message = try? JSONDecoder().decode(Message.self, from: data) else { return }
+        if message.scan == true { Task { @MainActor in self.onScanRequest?() } }
+        if message.box == true { Task { @MainActor in self.onBoxScanned?() } }
+        if message.placed == true { Task { @MainActor in self.onPlaced?() } }
+        if let fade = message.fade { let voice = message.voice, aloud = message.aloud ?? false; Task { @MainActor in self.onSettings?(fade, voice, aloud) } }
+        if let glasses = message.glasses { Task { @MainActor in self.onGlassesThroughMac?(glasses) } }
+        if let spin = message.spin { let zoom = message.zoom, tilt = message.tilt; Task { @MainActor in self.onRemoteView?(spin, zoom, tilt) } }
+        if let step = message.step { Task { @MainActor in self.onRemoteStep?(step) } }
     }
 }
 
 extension PeerSync: MCSessionDelegate, MCNearbyServiceAdvertiserDelegate, MCNearbyServiceBrowserDelegate {
     nonisolated func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         let names = session.connectedPeers.map(\.displayName)
-        Task { @MainActor in self.onPeersChanged?(names) }
+        Task { @MainActor in
+            self.wirelessPeers = names
+            self.reportPeers()
+        }
     }
 
     nonisolated func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        guard let message = try? JSONDecoder().decode(Message.self, from: data) else { return }
-        let step = message.step
-        Task { @MainActor in self.onRemoteStep?(step) }
+        deliver(data)
     }
 
     nonisolated func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}

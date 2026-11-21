@@ -318,8 +318,9 @@ final class BuildModel {
         return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
     }()
 
-    func recording(_ key: String) -> URL? {
-        Self.resource("voice-\(key)", "m4a", in: bundle)
+    /// A line's recording in a voice (its file prefix, AppModel.voices), or the default voice's.
+    func recording(_ key: String, voice prefix: String = "") -> URL? {
+        Self.resource("voice-\(prefix)\(key)", "m4a", in: bundle) ?? Self.resource("voice-\(key)", "m4a", in: bundle)
     }
 
     /// The step as someone would say it: "Step 3 of 23. Add one tan axle pin."

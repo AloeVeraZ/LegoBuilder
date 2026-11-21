@@ -45,15 +45,15 @@ if $lineup_only || ! a shell "test -s /sdcard/Android/data/$APP/files/lined-up" 
     say "Line up the camera with your eye (once):"
     echo "  1. On the iPhone: Instructions › ••• › Table marker. Lay the phone flat on the table."
     echo "  2. Put the glasses on and sit as you will when building."
-    echo "  3. A circle appears. Look so the code on the phone sits in the circle, and click once."
-    echo "  4. A second circle appears. Do the same again."
-    echo "  The code's outline then shows in green over the real one for a few seconds."
+    echo "  3. A circle appears. Look so the code on the phone sits in the circle, and tap once."
+    echo "  The code's outline then shows in green over the real one for a few seconds;"
+    echo "  swipe to make it bigger or smaller until it matches."
     a logcat -c
     a shell am start -n $APP/.MainActivity --ez lineup true >/dev/null
     echo
-    echo "Waiting for the two clicks (Ctrl-C to stop)..."
+    echo "Waiting for the tap (Ctrl-C to stop)..."
     while :; do
-        line=$(a logcat -d -s BuildLens | grep -E "line-up: (done|given up|click, but|the two places)" | tail -1 || true)
+        line=$(a logcat -d -s BuildLens | grep -E "line-up: (done|given up|click, but|makes no sense)" | tail -1 || true)
         case "$line" in
             *"line-up: done"*) say "Lined up."; break ;;
             *"line-up: given up"*) say "No clicks for two minutes, so the glasses went back to the steps. Run: glasses/setup.sh lineup"; exit 1 ;;

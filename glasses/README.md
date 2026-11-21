@@ -13,9 +13,42 @@ a sub-build) and the pieces to add.
   the instructions on the phone brings the glasses' screen up.
 - **Stays on.** Closing the phone app does not close the glasses; they keep their step.
 - **Both ways.** A step changed on the phone shows on the glasses and the other way round.
-- **Controls** (side button, touchpad tap or ring):
-  one click = next step, two clicks = this step again, three clicks = back one step.
-  Swiping the touchpad forward zooms the picture in, back zooms it out.
+- **Start: scan the box.** The app opens on "scan the box": hold the barcode on the set's
+  box (6 73419 42442 4) in front of the glasses. It is read with ZXing (libs/, Apache 2.0)
+  on the glasses' own camera, any way up. Hold the touchpad to skip it. The phone and Mac
+  apps start the same way, with their own cameras (barcode, item number 6588582 or set
+  number 42233; BuildConfig.swift).
+- **Then: scan the phone.** Next comes the scan: a circle in the middle and "put the
+  code on your phone in the circle, then tap". On the iPhone: Instructions › ••• › Table
+  marker (the glasses also ask the phone to put it up by itself, `"scan": true` on the link,
+  once phone and glasses are linked over Wi-Fi). Look so the code sits in the circle and
+  tap: that finds the phone and lines the camera up with this wearer's eye in one go. For
+  12 s the code's outline shows in green over the real one; swipe to make it bigger or
+  smaller until it matches (remembered). Double tap while scanning: the start screen (the
+  set, as on the phone's home; tap to scan).
+- **Build.** The green LEGO sits in the middle of the view and follows the head
+  (GhostView.FOLLOW_VIEW; the phone's code is still tracked, for putting it on the table
+  later). Each new step turns it to the side the phone app shows that step from. The step
+  picture hides while the LEGO shows; the step's words stay.
+- **Controls** (touchpad; it reports only finished gestures, never fingers or position):
+  tap = next step, double tap = back (the M6 sends its double tap as F12 and then a Back
+  key of its own, which is ignored), quick flick forward/back = turn the LEGO a quarter
+  turn, triple tap = flicks zoom instead (back to turning after 5 s without a flick),
+  hold = the menu (a slow slide also reads as a hold). A tap the touchpad adds at the end
+  or start of a flick is ignored. Back never leaves the app.
+- **Shared view.** Turn and zoom are one state on phone, Mac and glasses: flicks on the
+  glasses move the phone's 3D view, and turning or pinching on the phone (3D, or turning in
+  AR) moves the glasses, about 30 times a second. Phone and Mac talk over Wi-Fi or the USB
+  cable (USBLink, through macOS's usbmuxd); the Mac talks to the glasses over USB (adb).
+- **Menu**: Show built pieces, Read steps aloud (the two switches, as on the phone, and
+  remembered), Scan phone again, Replay step, Start over. Swipe to move, tap to switch or
+  do, double tap to go back to the LEGO; it closes by itself after 20 s.
+- **Sound.** The M6 clicks on every touchpad gesture (the system does it, on the media
+  channel). While BuildLens is open that channel is muted and put back afterwards; Read
+  steps aloud plays on the alarm channel instead.
+- **Live view on the Mac.** With the glasses plugged into the Mac, the Mac app's Glasses
+  preview shows the glasses' camera in colour, with the ghost drawn where the glasses
+  think it goes. It goes over the USB cable only (`adb forward`, port 52734).
 - **Battery.** The step pictures are drawn on a computer by the pipeline and only shown
   here. The arrow's bounce is two pictures swapped by a timer and stops after 20 seconds
   without input; after 5 idle minutes the display may sleep. The camera runs while the app
@@ -44,7 +77,7 @@ bottom of `MainActivity.java`.
 
 With the phone lying on the table showing its marker (iPhone: Instructions › ••• › Table
 marker), the glasses' camera finds it and the step pictures give way to the step's pieces
-drawn in green right where they go: the build stands 11 cm to the right of the phone's
+drawn in green right where they go: the build stands on the phone's
 code, what is already built shows faintly, and the new pieces go in one after another, as
 on the phone. Look away from the phone and the step pictures come back. Clicks work the
 same either way.
@@ -56,9 +89,13 @@ picture to the camera image to a fraction of a pixel. `MarkerPose` turns that in
 the phone is in space, `Lineup` maps camera to display, and `GhostView` draws the pieces
 with OpenGL ES 2 (the step shapes come from `make_assets.py`: `assets/ghost.json` + `ghost.bin`).
 
-Limits: the marker is 50 mm across, so the camera has to be within roughly 60 cm of it
-(less when looking at it from a steep angle). The line-up is exact at the distance it was
-done at and drifts a little nearer or further away.
+Range: the phone's marker is 67.9 mm across (as wide as the screen allows, at full
+brightness) and the glasses look at it in 2048 x 1536, so it is found lying flat on the table
+from a normal seat, about half a metre away. It needs about 4 camera pixels a cell. The
+line-up is exact at the distance it was done at and drifts a little nearer or further away.
+Until the glasses are lined up the ghost is not drawn on them (it would be in the wrong
+place); the step picture stays full size. With the ghost up, the step picture sits small in
+the top right corner.
 
 Trying it without glasses: `tools/test_marker.sh` checks the marker finder on made-up
 camera pictures on this Mac. On the emulator, a still picture can stand in for the camera:

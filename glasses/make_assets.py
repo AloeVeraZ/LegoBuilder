@@ -56,7 +56,17 @@ for i, s in enumerate(pkg["steps"]):
 finish = sorted(f for f in os.listdir(os.path.join(data, "hud")) if f.startswith("hud-finish-"))
 for f in finish:
     shutil.copy(os.path.join(data, "hud", f), os.path.join(out, "hud", f))
-json.dump({"name": pkg["set"]["name"], "finish": len(finish), "steps": steps}, open(os.path.join(out, "steps.json"), "w"))
+# The start screen shows the set like the phone's home: number, name, pieces, steps, minutes
+# (BuildConfig.minutesPerStep on the phone is 0.6).
+json.dump({"name": pkg["set"]["name"], "id": pkg["set"]["id"], "pieces": pkg["set"].get("pieces", 0),
+           "minutes": max(1, round(len(steps) * 0.6)), "finish": len(finish), "steps": steps},
+          open(os.path.join(out, "steps.json"), "w"))
+# The phone's recorded voice lines, for READ STEPS ALOUD on the glasses' own speaker.
+voice = os.path.join(data, "voice")
+os.makedirs(os.path.join(out, "voice"), exist_ok=True)
+for f in os.listdir(voice) if os.path.isdir(voice) else []:
+    if f.endswith(".m4a"):
+        shutil.copy(os.path.join(voice, f), os.path.join(out, "voice", f))
 print(f"{len(steps)} steps -> {out}")
 
 # ---------------------------------------------------------------- the ghost

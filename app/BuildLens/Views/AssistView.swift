@@ -8,13 +8,24 @@ import simd
 /// real world is seen through the lens); here the camera picture stands in for that.
 struct AssistView: View {
     @Environment(AppModel.self) private var app
-    let tracker: MarkerTracker
+    let tracker: any LiveCamera
 
     @State private var ghosts = GhostCache()
     @State private var began = Date()
 
-    /// The build stands this far to the right of the marker's middle, clear of the phone.
-    static let buildOffset: Float = 0.11
+    /// The build stands this far to the right of the marker's middle: none, so the piece
+    /// shows right on the code (as GhostView.BUILD_OFFSET on the glasses).
+    static let buildOffset: Float = 0
+    /// The pieces are drawn this many times their real size, to be easy to see on the code
+    /// (as GhostView.GHOST_SCALE on the glasses).
+    static let ghostScale: Float = 3
+
+    /// The shared turn (about the model's upright) and zoom, as the glasses show them.
+    static func turnAndZoom(spin: Double, zoom: Double) -> simd_float4x4 {
+        let a = Float(spin * .pi / 180), z = Float(max(0.2, min(zoom, 5)))
+        let c = cos(a) * z, s = sin(a) * z
+        return simd_float4x4(columns: (SIMD4(c, 0, -s, 0), SIMD4(0, z, 0, 0), SIMD4(s, 0, c, 0), SIMD4(0, 0, 0, 1)))
+    }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
@@ -22,42 +33,51 @@ struct AssistView: View {
                 draw(in: &context, size: size, time: timeline.date.timeIntervalSince(began))
             }
         }
-        .overlay(alignment: .bottom) {
-            if tracker.state != .tracking {
-                Label(tracker.state == .noCamera ? "No camera" : "Find the phone", systemImage: tracker.state == .noCamera ? "video.slash" : "iphone")
+        // In the middle, clear of the step text along the top and bottom.
+        .overlay {
+            if tracker.livePose == nil {
+                Label(tracker.liveNoCamera ? "No camera" : "Find the phone", systemImage: tracker.liveNoCamera ? "video.slash" : "iphone")
                     .font(.system(.callout, design: .monospaced).weight(.bold))
                     .foregroundStyle(Theme.Palette.hud)
                     .shadow(color: .black, radius: 3)
                     .padding(Theme.Spacing.md)
             }
         }
-        .onChange(of: app.step) { began = Date() }
+        .onChange(of: shownStep?.index) { began = Date() }
         .accessibilityLabel("Live view with the next piece drawn in place")
     }
 
+    /// The step drawn: the one the camera's owner is on (the glasses), else the app's.
+    private var shownStep: BuildModel.StepInfo? {
+        guard let step = tracker.liveStep else { return app.currentStep }
+        guard let steps = app.model?.steps, !steps.isEmpty else { return nil }
+        return steps[min(max(step, 0), steps.count - 1)]
+    }
+
     private func draw(in context: inout GraphicsContext, size: CGSize, time: Double) {
-        let picture = tracker.imageSize
+        let picture = tracker.liveSize
         // The camera picture fills the display; the same mapping places everything drawn on it.
         let scale = max(size.width / picture.width, size.height / picture.height)
         let origin = CGPoint(x: (size.width - picture.width * scale) / 2, y: (size.height - picture.height * scale) / 2)
-        if let image = tracker.image {
+        if let image = tracker.liveImage {
             var world = context
             world.opacity = 0.8
             world.draw(Image(decorative: image, scale: 1),
                        in: CGRect(x: origin.x, y: origin.y, width: picture.width * scale, height: picture.height * scale))
         }
-        guard let pose = tracker.pose, let model = app.model, let step = app.currentStep else { return }
+        guard let pose = tracker.livePose, let model = app.model, let step = shownStep else { return }
         let ghost = ghosts.ghost(for: step, in: model)
 
         // Model space (+Y up, standing on its own ground) onto the table beside the marker:
         // the model's up is out of the phone's screen.
         let onTable = simd_float4x4(columns: (
-            SIMD4(1, 0, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(0, -1, 0, 0), SIMD4(Self.buildOffset, 0, 0, 1)
-        ))
+            SIMD4(Self.ghostScale, 0, 0, 0), SIMD4(0, 0, Self.ghostScale, 0), SIMD4(0, -Self.ghostScale, 0, 0), SIMD4(Self.buildOffset, 0, 0, 1)
+        )) * Self.turnAndZoom(spin: app.modelSpin, zoom: app.modelZoom)
         let toCamera = pose * onTable
-        let f = CGFloat(tracker.focal), cx = picture.width / 2, cy = picture.height / 2
+        let lens = tracker.liveLens
+        let fx = CGFloat(lens.x), fy = CGFloat(lens.y), cx = CGFloat(lens.z), cy = CGFloat(lens.w)
         func project(_ p: SIMD3<Float>) -> CGPoint {
-            CGPoint(x: origin.x + (CGFloat(p.x / p.z) * f + cx) * scale, y: origin.y + (CGFloat(p.y / p.z) * f + cy) * scale)
+            CGPoint(x: origin.x + (CGFloat(p.x / p.z) * fx + cx) * scale, y: origin.y + (CGFloat(p.y / p.z) * fy + cy) * scale)
         }
         func inCamera(_ p: SIMD3<Float>) -> SIMD3<Float> {
             let v = toCamera * SIMD4(p, 1)
@@ -119,6 +139,40 @@ struct AssistView: View {
         }
     }
 }
+
+/// A camera the live view draws on: the Mac's own (MarkerTracker) or the glasses' (GlassesFeed).
+@MainActor
+protocol LiveCamera: AnyObject {
+    var liveImage: CGImage? { get }
+    /// Camera from marker; nil while the marker is not seen.
+    var livePose: simd_float4x4? { get }
+    var liveSize: CGSize { get }
+    /// fx, fy, cx, cy in pixels, with the picture spanning 0...width.
+    var liveLens: SIMD4<Float> { get }
+    var liveNoCamera: Bool { get }
+    /// The step this camera's owner is on; nil to follow the app.
+    var liveStep: Int? { get }
+}
+
+extension MarkerTracker: LiveCamera {
+    var liveImage: CGImage? { image }
+    var livePose: simd_float4x4? { pose }
+    var liveSize: CGSize { imageSize }
+    var liveLens: SIMD4<Float> { SIMD4(focal, focal, Float(imageSize.width) / 2, Float(imageSize.height) / 2) }
+    var liveNoCamera: Bool { state == .noCamera }
+    var liveStep: Int? { nil }
+}
+
+#if os(macOS)
+extension GlassesFeed: LiveCamera {
+    var liveImage: CGImage? { image }
+    var livePose: simd_float4x4? { pose }
+    var liveSize: CGSize { imageSize }
+    var liveLens: SIMD4<Float> { lens }
+    var liveNoCamera: Bool { false }
+    var liveStep: Int? { step }
+}
+#endif
 
 /// The pieces of one step as loose triangles, standing where the build stands.
 struct Ghost {
@@ -209,6 +263,8 @@ final class GhostCache {
 /// and the glasses' camera finds it.
 struct MarkerCard: View {
     @Environment(\.dismiss) private var dismiss
+    /** The screen's brightness before the marker went up, to put back. */
+    @State private var brightness: CGFloat?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -217,8 +273,10 @@ struct MarkerCard: View {
                 Image(decorative: code, scale: 1)
                     .interpolation(.none)
                     .resizable()
-                    // 50 mm across on an iPhone screen (about 153 points to the inch).
-                    .frame(width: 302, height: 302)
+                    // 67.9 mm across on an iPhone screen (about 153 points to the inch):
+                    // as big as the screen allows, so the glasses find it from across a table.
+                    // The glasses and MarkerTracker.side use the same size.
+                    .frame(width: 410, height: 410)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             Button {
@@ -236,8 +294,16 @@ struct MarkerCard: View {
             .accessibilityLabel("Close")
         }
         .statusBarHidden()
-        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        // Full brightness while the marker is up: it beats the glare off a screen lying flat.
+        .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = true
+            brightness = UIScreen.main.brightness
+            UIScreen.main.brightness = 1
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+            if let brightness { UIScreen.main.brightness = brightness }
+        }
     }
 }
 #endif

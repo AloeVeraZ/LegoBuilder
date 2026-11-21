@@ -16,7 +16,7 @@ final class MarkerTracker: NSObject {
     /// What the marker says. Any other QR code is ignored.
     nonisolated static let payload = "BUILDLENS-TABLE"
     /// How wide the marker is on the phone's screen, in metres.
-    nonisolated static let side: Float = 0.05
+    nonisolated static let side: Float = 0.0679
 
     enum State: Equatable { case off, starting, noCamera, looking, tracking }
 

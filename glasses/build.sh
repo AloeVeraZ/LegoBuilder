@@ -11,11 +11,14 @@ python3 make_assets.py
 "$BT/aapt2" compile --dir res -o build/res.zip
 "$BT/aapt2" link -I "$JAR" --manifest AndroidManifest.xml -A assets -o build/unsigned.apk build/res.zip
 # Stop on a compile error (the noise about Java 8 and deprecations is left out).
-if ! javac --release 8 -classpath "$JAR" -d build/classes $(find src -name '*.java') > build/javac.log 2>&1; then
+# ZXing (libs/, Apache 2.0) reads the barcode on the set's box.
+LIBS=libs/core-3.5.3.jar
+if ! javac --release 8 -classpath "$JAR:$LIBS" -d build/classes $(find src -name '*.java') > build/javac.log 2>&1; then
     grep -v "bootstrap classpath\|^warning\|^1 warning\|obsolete\|suppress" build/javac.log; echo "Build failed."; exit 1
 fi
 (cd build/classes && jar cf ../classes.jar .)
-"$BT/d8" --min-api 24 --lib "$JAR" --output build/dex build/classes.jar
+cp "$LIBS" build/libs.jar
+"$BT/d8" --min-api 24 --lib "$JAR" --output build/dex build/classes.jar build/libs.jar
 cp build/unsigned.apk build/with-dex.apk
 (cd build/dex && zip -q ../with-dex.apk classes.dex)
 "$BT/zipalign" -f 4 build/with-dex.apk build/aligned.apk

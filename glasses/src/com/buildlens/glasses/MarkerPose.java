@@ -9,7 +9,7 @@ package com.buildlens.glasses;
  */
 public final class MarkerPose {
     /** How wide the marker is on the phone's screen, border included, in metres (as the phone draws it). */
-    public static final float SIDE = 0.05f;
+    public static final float SIDE = 0.0679f;
 
     private MarkerPose() {}
 

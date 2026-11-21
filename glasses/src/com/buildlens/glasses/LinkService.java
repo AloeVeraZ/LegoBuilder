@@ -51,6 +51,13 @@ public class LinkService extends Service {
     interface Listener {
         void onRemoteStep(boolean replay);
         void onLinkChanged();
+        /** The phone or Mac scanned the set's box ("box": true): no need to scan it here. */
+        void onBoxScanned();
+        /** The phone's settings: fade the pieces already built; the voice's file prefix; read aloud. */
+        void onSettings(boolean fade, String voice, boolean aloud);
+        /** The model was turned or zoomed on the phone (or Mac): "spin" degrees, "zoom" (or -1),
+         *  "tilt" degrees seen from above (NaN: not sent, e.g. turned in AR). */
+        void onRemoteView(float spin, float zoom, float tilt);
     }
 
     static volatile int step = 0;
@@ -81,6 +88,50 @@ public class LinkService extends Service {
     static boolean phoneLinked() {
         LinkService s = instance;
         return s != null && !s.clients.isEmpty();
+    }
+
+    /** True while the glasses are scanning for the phone's code: every message then asks the
+     *  phone to show it ("scan": true), so nobody has to open it by hand. */
+    static volatile boolean scanning;
+
+    /** The glasses have placed the build (the tag is scanned): the phone can leave its code. */
+    static void announcePlaced() {
+        LinkService s = instance;
+        if (s == null) return;
+        String m = "{\"step\":" + step + ",\"finished\":" + finished + ",\"placed\":true,\"hello\":true}\n";
+        for (java.net.Socket c : s.clients) s.sendTo(c, m);
+    }
+
+    /** A setting was changed on the glasses: the phone (through the Mac) changes it too. */
+    static void sendSettings(boolean fade, String voice, boolean aloud) {
+        LinkService s = instance;
+        if (s == null) return;
+        String m = "{\"step\":" + step + ",\"finished\":" + finished + ",\"fade\":" + fade + ",\"voice\":\"" + voice
+                + "\",\"aloud\":" + aloud + ",\"hello\":true}\n";
+        for (java.net.Socket c : s.clients) s.sendTo(c, m);
+    }
+
+    /** Tells the phone and Mac how the model is turned and zoomed here. */
+    static void sendView(float spin, float zoom, float tilt) {
+        LinkService s = instance;
+        if (s == null) return;
+        String m = String.format(java.util.Locale.US, "{\"step\":%d,\"finished\":%b,\"spin\":%.1f,\"zoom\":%.3f,\"tilt\":%.1f}\n",
+                step, finished, spin, zoom, tilt);
+        for (java.net.Socket c : s.clients) s.sendTo(c, m);
+    }
+
+    /** Tells the phone and Mac the set's box is done (so their own box scan moves on). */
+    static void announceBox() {
+        LinkService s = instance;
+        if (s == null) return;
+        String m = "{\"step\":" + step + ",\"finished\":" + finished + ",\"box\":true,\"hello\":true}\n";
+        for (java.net.Socket c : s.clients) s.sendTo(c, m);
+    }
+
+    /** Starts or stops asking the phone to show its code (Table marker). */
+    static void askForMarker(boolean ask) {
+        scanning = ask;
+        if (ask) send(false);
     }
 
     /** Tells the phone what the glasses now show (after a click on the glasses). */
@@ -139,7 +190,8 @@ public class LinkService extends Service {
                     // Say where we are. While its instructions are open the phone leads and
                     // ignores this; when they are closed it just remembers the place, so
                     // opening them picks up where the glasses are.
-                    sendTo(s, "{\"step\":" + step + ",\"finished\":" + finished + ",\"hello\":true}\n");
+                    sendTo(s, "{\"step\":" + step + ",\"finished\":" + finished + ",\"hello\":true"
+                            + (scanning ? ",\"scan\":true" : "") + "}\n");
                     notifyLink();
                     new Thread(() -> readLoop(s), "client").start();
                 }
@@ -188,6 +240,22 @@ public class LinkService extends Service {
             String line;
             while ((line = r.readLine()) != null) {
                 JSONObject msg = new JSONObject(line);
+                if (msg.optBoolean("box", false)) {
+                    main.post(() -> { Listener l = listener; if (l != null) l.onBoxScanned(); });
+                }
+                if (msg.has("fade")) {
+                    final boolean fade = msg.optBoolean("fade", false);
+                    final String voice = msg.optString("voice", "");
+                    final boolean aloud = msg.optBoolean("aloud", false);
+                    main.post(() -> { Listener l = listener; if (l != null) l.onSettings(fade, voice, aloud); });
+                    if (!msg.has("step")) continue;
+                }
+                if (msg.has("spin")) {
+                    final float spin = (float) msg.optDouble("spin", 0), zoom = (float) msg.optDouble("zoom", -1);
+                    final float tilt = (float) msg.optDouble("tilt", Double.NaN);
+                    main.post(() -> { Listener l = listener; if (l != null) l.onRemoteView(spin, zoom, tilt); });
+                    continue;
+                }
                 if (!msg.has("step")) continue;
                 final int n = msg.getInt("step");
                 final boolean done = msg.optBoolean("finished", false);
@@ -245,7 +313,8 @@ public class LinkService extends Service {
     }
 
     private static String message(boolean replay) {
-        return "{\"step\":" + step + ",\"finished\":" + finished + (replay ? ",\"replay\":true" : "") + "}\n";
+        return "{\"step\":" + step + ",\"finished\":" + finished + (replay ? ",\"replay\":true" : "")
+                + (scanning ? ",\"scan\":true" : "") + "}\n";
     }
 
     private void sendTo(final Socket s, final String m) {

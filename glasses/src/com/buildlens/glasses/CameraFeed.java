@@ -63,8 +63,15 @@ final class CameraFeed {
     }
 
     interface Listener {
-        /** pose: camera from marker (null when the marker is not seen); centre: its middle in the picture. */
-        void onMarker(float[] pose, float[] centre, Lens lens);
+        /**
+         * fresh: camera from marker as found in this picture (null when not found in it);
+         * centre: its middle in the picture (kept for a moment after it was last seen);
+         * time: when the picture was taken (HeadTracker's clock).
+         */
+        void onMarker(float[] fresh, float[] centre, Lens lens, long time);
+        /** The set's box barcode was read (while lookForBox). */
+        void onBox(String code);
+
         /** The camera could not be used. */
         void onNoCamera();
     }
@@ -73,11 +80,26 @@ final class CameraFeed {
     private static final int EVERY_MS = 66;
     /** A marker lost for longer than this is gone; shorter gaps keep the last place. */
     private static final int HOLD_MS = 600;
-    /** The largest picture asked of the camera: a 50 mm marker needs a few pixels per cell. */
-    private static final int MAX_WIDTH = 1280;
+    /** The largest picture asked of the camera. The marker needs about 4 pixels a cell to be
+     *  found; with the phone flat on the table half a metre away that takes 2048 wide. */
+    private static final int MAX_WIDTH = 2048;
+    /** While on the box screen. The phone scans the box (and then shows its code, which the
+     *  glasses look for); the glasses' own barcode reading is a bonus (their lens is fixed-focus
+     *  and the bars come out thin), so the quick picture is kept and nothing restarts after. */
+    static final int BOX_WIDTH = 2048;
+    /** The largest picture asked of the camera now: MAX_WIDTH, or BOX_WIDTH on the box screen. */
+    static volatile int maxWidth = MAX_WIDTH;
+    /** Exposure below the camera's own choice, in stops: see startSession. */
+    static float EXPOSURE_EV = -1.5f;
 
     private final Context context;
     private final Listener listener;
+    /** Set to save the next camera picture as snap.pgm in the app's folder (adb: --ez snapshot true). */
+    static volatile boolean snapshot;
+    /** Set while the start screen wants the set's box: every picture is also read for its barcode. */
+    static volatile boolean lookForBox;
+    /** What onBox gets when the phone's code (rather than the box's barcode) was seen. */
+    static final String PHONE_MARKER = "phone-marker";
     private final Handler main = new Handler(Looper.getMainLooper());
     /** The current run. Each start gets its own thread, camera and buffers, so a run that is
      *  still closing (or still opening) can never get in the way of the next one. */
@@ -99,9 +121,15 @@ final class CameraFeed {
         Lens lens;
         final QrFinder finder = new QrFinder();
         byte[] grey = new byte[0];
+        /** The colour (U and V, half size), only kept while the Mac is watching (LiveFeed). */
+        byte[] u = new byte[0], v = new byte[0];
+        boolean colour;
         float[] pose;
+        long imageTime;
+        /** The marker as found in the last picture, to follow it from there. */
+        QrFinder.Found last;
         long lastSeen, lastSearch, lastLog;
-        int searched, seen;
+        int searched, seen, followedCount;
 
         Run() {
             thread.start();
@@ -174,6 +202,18 @@ final class CameraFeed {
                         int[] af = info.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
                         if (af != null && contains(af, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO))
                             request.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
+                        // The marker is a lit screen, far brighter than the room: exposed for the
+                        // room, its white blooms over the black cells and they come out thin and
+                        // grey. Darker pictures keep the cells black.
+                        android.util.Range<Integer> range = info.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
+                        android.util.Rational step = info.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
+                        if (range != null && step != null && step.floatValue() > 0) {
+                            // The box is printed, not lit: normal exposure for it (brighter, crisper bars).
+                            int want = Math.round((lookForBox ? 0 : EXPOSURE_EV) / step.floatValue());
+                            int ev = Math.max(range.getLower(), Math.min(range.getUpper(), want));
+                            request.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, ev);
+                            Log.i(TAG, "camera: exposure " + ev + " x " + step + " EV (range " + range + ")");
+                        }
                         s.setRepeatingRequest(request.build(), null, background);
                     } catch (Throwable e) {
                         fail("camera request: " + e);
@@ -188,6 +228,7 @@ final class CameraFeed {
             try {
                 image = r.acquireLatestImage();
                 if (image == null || !live) return;
+                imageTime = image.getTimestamp();
                 long now = SystemClock.uptimeMillis();
                 if (now - lastSearch < EVERY_MS) return;
                 lastSearch = now;
@@ -202,6 +243,14 @@ final class CameraFeed {
                         buf.position(row * stride);
                         buf.get(grey, row * w, w);
                     }
+                }
+                // The colour is only needed for the Mac's live view, so it is only copied then.
+                colour = LiveFeed.watched();
+                if (colour) {
+                    int cw = w / 2, ch = h / 2;
+                    if (u.length != cw * ch) { u = new byte[cw * ch]; v = new byte[cw * ch]; }
+                    copyPlane(image.getPlanes()[1], u, cw, ch);
+                    copyPlane(image.getPlanes()[2], v, cw, ch);
                 }
                 image.close();
                 image = null;
@@ -226,12 +275,14 @@ final class CameraFeed {
                 still[i] = (byte) ((((c >> 16) & 0xff) * 77 + ((c >> 8) & 0xff) * 150 + (c & 0xff) * 29) >> 8);
             }
             lens = Lens.guess(w, h, 0);
+            colour = false;
             Log.i(TAG, "camera: still picture " + path + ", lens " + lens);
             grey = new byte[still.length];
             Runnable again = new Runnable() {
                 @Override public void run() {
                     if (!live) return;
                     System.arraycopy(still, 0, grey, 0, still.length);
+                    imageTime = HeadTracker.clock();
                     search(w, h);
                     background.postDelayed(this, 100);
                 }
@@ -241,8 +292,46 @@ final class CameraFeed {
 
         // -------------------------------------------------------- both
         private void search(int w, int h) {
+            if (snapshot) {
+                snapshot = false;
+                java.io.File folder = context.getExternalFilesDir(null);
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(new java.io.File(folder, "snap.pgm"))) {
+                    out.write(("P5\n" + w + " " + h + "\n255\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                    out.write(grey, 0, w * h);
+                    Log.i(TAG, "camera: saved snap.pgm " + w + "x" + h);
+                } catch (Exception e) {
+                    Log.w(TAG, "snapshot", e);
+                }
+            }
+            if (lookForBox) {
+                // Only the barcode while on the box screen (the phone's code is not wanted yet).
+                long b0 = SystemClock.uptimeMillis();
+                String code = BarcodeReader.read(grey, w, h);
+                long b1 = SystemClock.uptimeMillis();
+                if (b1 - lastLog > 3000) {
+                    Log.i(TAG, "camera: box " + w + "x" + h + ", barcode read in " + (b1 - b0) + " ms" + (code == null ? ", none" : ""));
+                    lastLog = b1;
+                }
+                if (code != null) {
+                    Log.i(TAG, "camera: barcode " + code);
+                    main.post(() -> { if (run == this && live) listener.onBox(code); });
+                } else if (finder.find(grey, w, h, w) != null) {
+                    // The phone's code: the phone only shows it once it has scanned the box,
+                    // so seeing it means the box is done (no link needed for the hand-off).
+                    Log.i(TAG, "camera: the phone's code, so the box was scanned on the phone");
+                    main.post(() -> { if (run == this && live) listener.onBox(PHONE_MARKER); });
+                }
+                LiveFeed.offer(grey, colour ? u : null, colour ? v : null, w, h, lens, null);
+                return;
+            }
             long t0 = SystemClock.uptimeMillis();
-            QrFinder.Found found = finder.find(grey, w, h, w);
+            // Follow it from the last picture when there is one (it holds on through a lamp's
+            // reflection on the screen); look afresh otherwise.
+            QrFinder.Found found = last != null && t0 - lastSeen < HOLD_MS ? finder.follow(grey, w, h, w, last) : null;
+            boolean followed = found != null;
+            if (found == null) found = finder.find(grey, w, h, w);
+            last = found;
+            if (followed) followedCount++;
             float[] now = found == null ? null : MarkerPose.solve(found, lens.fx, lens.fy, lens.cx, lens.cy);
             long t1 = SystemClock.uptimeMillis();
             searched++;
@@ -254,15 +343,18 @@ final class CameraFeed {
                 pose = null;
             }
             if (t1 - lastLog > 3000) {
-                Log.i(TAG, "camera: marker seen in " + seen + " of " + searched + " pictures, last search " + (t1 - t0) + " ms"
+                Log.i(TAG, "camera: marker seen in " + seen + " of " + searched + " pictures (" + followedCount + " followed), last search " + (t1 - t0) + " ms"
                         + (found != null ? String.format(java.util.Locale.US, ", %.1f px a cell, match %.2f", found.cell, found.match) : ""));
                 lastLog = t1;
-                searched = seen = 0;
+                searched = seen = followedCount = 0;
             }
             final float[] p = pose;
+            LiveFeed.offer(grey, colour ? u : null, colour ? v : null, w, h, lens, p);
             final float[] centre = p == null ? null : MarkerPose.project(p, 0, 0, 0, lens.fx, lens.fy, lens.cx, lens.cy);
             final Lens l = lens;
-            main.post(() -> { if (run == this && live) listener.onMarker(p, centre, l); });
+            final float[] fresh = now;
+            final long time = imageTime;
+            main.post(() -> { if (run == this && live) listener.onMarker(fresh, centre, l, time); });
         }
     }
 
@@ -291,6 +383,25 @@ final class CameraFeed {
         r.background.post(r::close);
     }
 
+    /** One colour plane of the picture (cw x ch), whatever its row and pixel spacing. */
+    private static void copyPlane(Image.Plane plane, byte[] out, int cw, int ch) {
+        ByteBuffer buf = plane.getBuffer();
+        int rowStride = plane.getRowStride(), pixelStride = plane.getPixelStride();
+        if (pixelStride == 1 && rowStride == cw) {
+            buf.position(0);
+            buf.get(out, 0, Math.min(buf.remaining(), cw * ch));
+            return;
+        }
+        byte[] row = new byte[rowStride];
+        for (int y = 0; y < ch; y++) {
+            int start = y * rowStride, length = Math.min(rowStride, buf.capacity() - start);
+            if (length <= 0) break;
+            buf.position(start);
+            buf.get(row, 0, length);
+            for (int x = 0, i = 0; x < cw && i < length; x++, i += pixelStride) out[y * cw + x] = row[i];
+        }
+    }
+
     private static boolean contains(int[] list, int value) {
         for (int v : list) if (v == value) return true;
         return false;
@@ -316,7 +427,10 @@ final class CameraFeed {
         Log.i(TAG, "camera sizes " + Arrays.toString(sizes));
         Size best = null;
         for (Size s : sizes) {
-            if (s.getWidth() > MAX_WIDTH) continue;
+            if (s.getWidth() > maxWidth) continue;
+            // The sensor's own 4:3 shape, lying down: anything else is cut from it (a narrower
+            // view) or stands on end.
+            if (s.getWidth() * 3 != s.getHeight() * 4) continue;
             if (best == null || s.getWidth() * s.getHeight() > best.getWidth() * best.getHeight()) best = s;
         }
         return best != null ? best : sizes[sizes.length - 1];

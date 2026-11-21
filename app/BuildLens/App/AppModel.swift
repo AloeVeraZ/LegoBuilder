@@ -30,8 +30,97 @@ final class AppModel {
     /// AR: the cube in the corner that turns the model and puts it back.
     let viewCube = ViewCubeModel()
     private(set) var foundByScan = false
-    private(set) var syncPeers: [String] = []
+    private(set) var syncPeers: [String] = [] {
+        didSet { keepAwake.linked = !syncPeers.isEmpty || glassesConnected }
+    }
+    /// Keeps the phone awake and running (also in the background) while it is linked.
+    @ObservationIgnored let keepAwake = KeepAwake()
     private(set) var glassesConnected = false
+    /// The glasses asked for the phone's code (they are scanning): the Table marker goes up
+    /// by itself, from wherever the app is. Back to false when it is closed.
+    var markerRequested = false
+    /// The glasses have placed the build: the phone puts its code away and opens the steps.
+    var openInstructionsRequested = false
+
+    private func glassesPlaced() {
+        #if os(macOS)
+        sync.sendPlaced()                      // on to the phone
+        #else
+        markerRequested = false
+        openInstructionsRequested = true
+        #endif
+    }
+    /// The set's box has been scanned at the start (BoxScanView); until then nothing else shows.
+    /// The model's turn as seen (degrees about its upright, 0 = front towards the viewer) and
+    /// zoom (1 = as framed), the same on phone, Mac and glasses.
+    private(set) var modelSpin: Double = 0
+    private(set) var modelZoom: Double = 1
+    /// How far the view leans to look from above, in degrees (3D view only; nil until turned).
+    @ObservationIgnored private var modelTilt: Double?
+    @ObservationIgnored private var lastViewSent = Date.distantPast
+    @ObservationIgnored private var viewSendLater: Task<Void, Never>?
+
+    /// Turned or zoomed by hand here: shown on the others too (at most about 30 times a second,
+    /// the last one always sent).
+    func userTurned(spin: Double, zoom: Double?, tilt: Double? = nil) {
+        keepAwake.touch()
+        modelSpin = spin
+        if let zoom { modelZoom = zoom }
+        if let tilt { modelTilt = tilt }
+        sendView(toPhone: true, toGlasses: true)
+    }
+
+    /// Turned or zoomed on the phone (sync) or the glasses (link). The Mac passes it on to
+    /// the other one.
+    private func remoteView(spin: Double, zoom: Double?, tilt: Double?, fromGlasses: Bool) {
+        keepAwake.touch()
+        linkLog.info("view from \(fromGlasses ? "glasses" : "phone", privacy: .public): spin \(spin) zoom \(zoom ?? -1)")
+        modelSpin = spin
+        if let zoom { modelZoom = zoom }
+        if let tilt { modelTilt = tilt }
+        orbit?.apply(spin: spin, zoom: zoom, tilt: tilt)
+        #if os(macOS)
+        sendView(toPhone: fromGlasses, toGlasses: !fromGlasses)
+        #endif
+    }
+
+    private func sendView(toPhone: Bool, toGlasses: Bool) {
+        viewSendLater?.cancel()
+        let send = { [weak self] in
+            guard let self else { return }
+            self.lastViewSent = Date()
+            if toPhone { self.sync.sendView(spin: self.modelSpin, zoom: self.modelZoom, tilt: self.modelTilt) }
+            if toGlasses {
+                linkLog.info("view to glasses: spin \(self.modelSpin) zoom \(self.modelZoom)")
+                self.glasses.sendView(spin: self.modelSpin, zoom: self.modelZoom, tilt: self.modelTilt)
+            }
+        }
+        let wait = 0.033 - Date().timeIntervalSince(lastViewSent)
+        if wait <= 0 { send(); return }
+        viewSendLater = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            send()
+        }
+    }
+
+    /// Scanning it on any one device (phone, Mac or glasses' own camera) counts for all of them:
+    /// it is passed on to the others (PeerSync, the glasses link).
+    var setScanned = false {
+        didSet {
+            guard setScanned, !oldValue else { return }
+            sync.sendBoxScanned()
+            glasses.sendBoxScanned()
+            #if os(iOS)
+            // The phone leads at the start: straight on to the table marker, for the glasses
+            // to find. Once they have, they take over and the phone just lies there as the marker.
+            markerRequested = true
+            #endif
+        }
+    }
+    /// The Mac: the glasses on its cable last said they are scanning, so a phone that links
+    /// later is asked for the marker too.
+    private var glassesScanning = false
 
     /// A short "well done" between parts of the build (a sub-build finished, or the next
     /// one about to start). Shown for a moment, then the build moves on by itself.
@@ -63,11 +152,48 @@ final class AppModel {
             UserDefaults.standard.set(focusMode, forKey: "fadeBuiltPieces")
             scene?.dimPrevious = focusMode
             scene?.refresh()
+            sendSettings()
         }
     }
+    /// The voices to read steps in, by name, with their recordings' file prefix
+    /// (pipeline/make_voice.py VOICES). Original voices from the Kokoro model.
+    static let voices: [(name: String, prefix: String)] = [("Heart", ""), ("Onyx", "onyx-")]
+    var voiceName = UserDefaults.standard.string(forKey: "voiceName") ?? "Heart" {
+        didSet {
+            UserDefaults.standard.set(voiceName, forKey: "voiceName")
+            sendSettings()
+            if readAloud { speakCurrent() }
+        }
+    }
+    private var voicePrefix: String { Self.voices.first { $0.name == voiceName }?.prefix ?? "" }
+
+    /// Settings are made on the phone; the glasses follow them (through the Mac, or directly).
+    func sendSettings() {
+        sync.sendSettings(fade: focusMode, voice: voicePrefix, aloud: readAloud)
+        glasses.sendSettings(fade: focusMode, voice: voicePrefix, aloud: readAloud)
+    }
+
+    /// A setting changed on the glasses' menu: the same here (which sends it on, unchanged
+    /// values going no further).
+    private func settingsFromGlasses(fade: Bool, voice: String, aloud: Bool) {
+        #if os(macOS)
+        sync.sendSettings(fade: fade, voice: voice, aloud: aloud)   // on to the phone
+        #else
+        if focusMode != fade { focusMode = fade }
+        if readAloud != aloud { readAloud = aloud }
+        if let name = Self.voices.first(where: { $0.prefix == voice })?.name, voiceName != name { voiceName = name }
+        #endif
+    }
+
+    /// The glasses are on the other end (directly, or plugged into the Mac): they read the
+    /// steps through their own speaker, and the phone stays quiet so it isn't said twice.
+    private var glassesThroughMac = false
+    private var glassesSpeak: Bool { glassesConnected || glassesThroughMac }
+
     var readAloud = UserDefaults.standard.bool(forKey: "readStepsAloud") {
         didSet {
             UserDefaults.standard.set(readAloud, forKey: "readStepsAloud")
+            sendSettings()
             if readAloud { speakCurrent() } else { speaker.stop() }
         }
     }
@@ -117,15 +243,70 @@ final class AppModel {
 
             sync.onRemoteStep = { [weak self] index in
                 guard let self else { return }
+                #if os(macOS)
+                // The Mac in the middle: the phone's step goes on to the glasses on the cable.
+                self.glasses.send(step: index, finished: false)
+                #endif
                 if self.glasses.instructionsOpen { self.go(to: index, broadcast: false) } else { self.remember(step: index) }
             }
-            sync.onPeersChanged = { [weak self] names in self?.syncPeers = names }
+            sync.onPeersChanged = { [weak self] names in
+                guard let self else { return }
+                self.syncPeers = names
+                if self.setScanned, !names.isEmpty { self.sync.sendBoxScanned() }
+                #if os(macOS)
+                if !names.isEmpty { self.sync.sendGlassesPresent(self.glassesConnected) }
+                #endif
+                #if os(iOS)
+                if !names.isEmpty { self.sendSettings() }
+                #endif
+                #if os(macOS)
+                if self.glassesScanning, !names.isEmpty { self.sync.sendScanRequest() }
+                #endif
+            }
+            // The glasses (through the Mac) ask for the Table marker.
+            sync.onScanRequest = { [weak self] in self?.markerRequested = true }
+            sync.onBoxScanned = { [weak self] in self?.setScanned = true }
+            #if os(macOS)
+            // The phone's settings, on to the glasses.
+            sync.onSettings = { [weak self] fade, voice, aloud in self?.glasses.sendSettings(fade: fade, voice: voice ?? "", aloud: aloud) }
+            #else
+            // The glasses' menu, through the Mac.
+            sync.onSettings = { [weak self] fade, voice, aloud in self?.settingsFromGlasses(fade: fade, voice: voice ?? "", aloud: aloud) }
+            sync.onGlassesThroughMac = { [weak self] present in
+                self?.glassesThroughMac = present
+                if present { self?.speaker.stop() }
+            }
+            #endif
+            sync.onPlaced = { [weak self] in self?.glassesPlaced() }
+            glasses.onPlaced = { [weak self] in self?.glassesPlaced() }
+            glasses.onSettings = { [weak self] fade, voice, aloud in self?.settingsFromGlasses(fade: fade, voice: voice, aloud: aloud) }
+            sync.onRemoteView = { [weak self] spin, zoom, tilt in self?.remoteView(spin: spin, zoom: zoom, tilt: tilt, fromGlasses: false) }
+            glasses.onRemoteView = { [weak self] spin, zoom, tilt in self?.remoteView(spin: spin, zoom: zoom, tilt: tilt, fromGlasses: true) }
+            orbit.onUserTurn = { [weak self] spin, zoom, tilt in self?.userTurned(spin: spin, zoom: zoom, tilt: tilt) }
+            glasses.onBoxScanned = { [weak self] in self?.setScanned = true }
             sync.start()
-            glasses.onConnectionChange = { [weak self] connected in self?.glassesConnected = connected }
+            glasses.onConnectionChange = { [weak self] connected in
+                guard let self else { return }
+                self.glassesConnected = connected
+                self.keepAwake.linked = !self.syncPeers.isEmpty || connected
+                #if os(macOS)
+                self.sync.sendGlassesPresent(connected)  // so the phone knows the glasses speak
+                #endif
+                if connected, self.setScanned { self.glasses.sendBoxScanned() }
+                #if os(iOS)
+                if connected { self.sendSettings() }
+                #endif
+            }
             // A click on the glasses. They already show the result, so nothing is sent back
             // (an echo arriving late could pull them back a step).
             glasses.onRemoteStep = { [weak self] index, finished, replay in
                 guard let self else { return }
+                #if os(macOS)
+                // The Mac in the middle: a click on the glasses goes on to the phone. A click
+                // means they are building, so no longer scanning.
+                self.glassesScanning = false
+                if !finished { self.sync.send(step: index) }
+                #endif
                 guard self.glasses.instructionsOpen else {
                     // The phone is on its home screen or still scanning: just keep our place
                     // in step with the glasses, without touching what is on screen.
@@ -147,15 +328,28 @@ final class AppModel {
             }
             // Glasses that are part-way through a build when we link: keep our place with
             // theirs, unless the instructions are open here (then the phone leads).
+            // The glasses are looking for the phone's code: put it up on the phone.
+            glasses.onScanRequest = { [weak self] in
+                guard let self else { return }
+                #if os(macOS)
+                self.glassesScanning = true
+                self.sync.sendScanRequest()        // on to the phone
+                #else
+                self.markerRequested = true
+                #endif
+            }
             glasses.onHello = { [weak self] index, finished in
                 guard let self, !self.glasses.instructionsOpen, !finished, index > 0 else { return }
                 self.remember(step: index)
             }
-            // Only the phone drives the glasses. The Mac app is for showing the build on a
-            // big screen; it follows the phone, and its Glasses preview window shows what the
-            // glasses show.
+            // The phone links to the glasses over Wi-Fi when both are on it. The Mac links to
+            // glasses plugged into its USB cable and passes steps between them and the phone.
             #if os(iOS)
             glasses.start()
+            #else
+            // The Mac reaches glasses plugged into its USB cable and passes steps between them
+            // and the phone, so the phone and glasses need no Wi-Fi link of their own.
+            glasses.startUSB()
             #endif
             voice.onCommand = { [weak self] command in self?.handle(command) }
         } catch {
@@ -363,8 +557,9 @@ final class AppModel {
 
     /// Says a line: its recording if there is one, else its words in the phone's own voice.
     private func speak(_ key: String, otherwise: String) {
+        if glassesSpeak { return }
         guard let model else { return speaker.say(otherwise) }
-        speaker.say(model.spokenLines[key] ?? otherwise, recording: model.recording(key))
+        speaker.say(model.spokenLines[key] ?? otherwise, recording: model.recording(key, voice: voicePrefix))
     }
 
     /// Stops whatever is being said, at once (leaving the instructions, or changing view).

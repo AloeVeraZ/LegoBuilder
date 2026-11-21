@@ -86,7 +86,10 @@ struct BuildScreen: View {
         .onDisappear { app.leaveInstructions() }
         #if os(iOS)
         .statusBarHidden(mode == .ar)
-        .fullScreenCover(isPresented: $showMarker) { MarkerCard() }
+        .fullScreenCover(isPresented: $showMarker, onDismiss: { app.markerRequested = false }) { MarkerCard() }
+        // The glasses asked for the code (they are scanning the phone).
+        .onChange(of: app.markerRequested) { _, wanted in showMarker = wanted }
+        .onAppear { if app.markerRequested { showMarker = true } }
         .sheet(isPresented: $showGlasses) {
             GlassesPreview()
                 .environment(app)
@@ -164,7 +167,15 @@ struct BuildScreen: View {
                     Toggle("Fade pieces already built", isOn: Binding(get: { app.focusMode }, set: { app.focusMode = $0 }))
                     Toggle("Read steps aloud", isOn: Binding(get: { app.readAloud }, set: { app.readAloud = $0 }))
                 }
+                #if os(iOS)
                 .menuActionDismissBehavior(.disabled)
+                #endif
+                Picker(selection: Binding(get: { app.voiceName }, set: { app.voiceName = $0 })) {
+                    ForEach(AppModel.voices, id: \.name) { Text($0.name).tag($0.name) }
+                } label: {
+                    Label("Voice", systemImage: "waveform")
+                }
+                .pickerStyle(.menu)
                 Button {
                     Task { await app.voice.toggle() }
                 } label: {

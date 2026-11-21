@@ -93,13 +93,18 @@ public final class MarkerRefine {
                     double r = p[8] * t + p[9] - here;
                     error += r * r;
                     used++;
+                    // Points far off what the marker should look like there (a lamp's
+                    // reflection across the screen, a finger) count for less, so they can't
+                    // drag the fit off the rest.
+                    double far = Math.abs(r), limit = Math.max(8, Math.abs(p[8]) * 0.35);
+                    double weight = far <= limit ? 1 : limit / far;
                     // d(here)/d(p): the picture's slope times how the point moves.
                     g[0] = -gx * u / w; g[1] = -gx * v / w; g[2] = -gx / w;
                     g[3] = -gy * u / w; g[4] = -gy * v / w; g[5] = -gy / w;
                     g[6] = (gx * x + gy * y) * u / w; g[7] = (gx * x + gy * y) * v / w;
                     g[8] = t; g[9] = 1;
                     for (int a = 0; a < 10; a++) {
-                        double ga = g[a];
+                        double ga = g[a] * weight;
                         if (ga == 0) continue;
                         double[] row = normal[a];
                         for (int b = a; b < 10; b++) row[b] += ga * g[b];
