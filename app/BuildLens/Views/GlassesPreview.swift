@@ -13,6 +13,10 @@ struct GlassesPreview: View {
     /// The side the display last settled on, for the slot-in frames of the step being left.
     @State private var settledView = 0
 
+    /// Live: the camera's picture with the step drawn onto the real table.
+    @State private var live = false
+    @State private var tracker = MarkerTracker()
+
     /// When the confetti went off (nil = none).
     @State private var confetti: Date?
 
@@ -118,6 +122,17 @@ struct GlassesPreview: View {
                         .foregroundStyle(Theme.Palette.textSecondary)
                 }
                 Spacer(minLength: Theme.Spacing.xs)
+                #if os(macOS)
+                // The Mac's camera stands in for the camera on the glasses.
+                Button {
+                    live.toggle()
+                } label: {
+                    Label("Live", systemImage: live ? "video.fill" : "video")
+                }
+                .buttonStyle(PillButtonStyle(kind: live ? .primary : .secondary, height: Theme.Size.hitTarget))
+                .fixedSize()
+                .accessibilityLabel(live ? "Stop live view" : "Live view")
+                #endif
                 // Only the phone links to the glasses; on the Mac this window is the stand-in.
                 #if os(iOS)
                 StatusChip(
@@ -146,7 +161,9 @@ struct GlassesPreview: View {
     private var display: some View {
         ZStack {
             Color.black
-            if let url = frameURL, let image = ImageCache.shared.image(at: url) {
+            if live {
+                AssistView(tracker: tracker)
+            } else if let url = frameURL, let image = ImageCache.shared.image(at: url) {
                 Image(platformImage: image)
                     .resizable()
                     .scaledToFit()
@@ -166,6 +183,8 @@ struct GlassesPreview: View {
         // glasses play: the last piece slots in, then the new one waits with a bouncing arrow.
         .task(id: Playing(step: app.step, finished: app.showingFinished, view: app.glassesView,
                           milestone: app.milestone != nil, seating: app.isSeating)) { await play() }
+        .onChange(of: live) { _, on in if on { tracker.start() } else { tracker.stop() } }
+        .onDisappear { tracker.stop(); live = false }
         .clipShape(Theme.shape(Theme.Radius.tile))
         .overlay {
             Theme.shape(Theme.Radius.tile)

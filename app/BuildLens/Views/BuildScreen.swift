@@ -20,6 +20,7 @@ struct BuildScreen: View {
     @State private var freeBottom: CGFloat = 0
     #if os(iOS)
     @State private var showGlasses = false
+    @State private var showMarker = false
     #else
     @Environment(\.openWindow) private var openWindow
     #endif
@@ -85,6 +86,7 @@ struct BuildScreen: View {
         .onDisappear { app.leaveInstructions() }
         #if os(iOS)
         .statusBarHidden(mode == .ar)
+        .fullScreenCover(isPresented: $showMarker) { MarkerCard() }
         .sheet(isPresented: $showGlasses) {
             GlassesPreview()
                 .environment(app)
@@ -165,6 +167,7 @@ struct BuildScreen: View {
                 }
                 #if os(iOS)
                 Button { showGlasses = true } label: { Label("Glasses preview", systemImage: "eyeglasses") }
+                Button { showMarker = true } label: { Label("Table marker", systemImage: "qrcode") }
                 if mode == .ar {
                     Button { app.placingOnSurface = true } label: { Label("Place on a surface", systemImage: "square.3.layers.3d.down.right") }
                     Button { app.beginScanning() } label: { Label("Scan again", systemImage: "camera.viewfinder") }
