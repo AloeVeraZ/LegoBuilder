@@ -7,9 +7,10 @@ The same app runs on the Mac, and the two stay on the same step.
 
 Hackathon demo set: **LEGO Technic 42233-3 Dump Truck** (Mighty Machines Series 1, 46 pieces).
 
-> The 3D model is our own reconstruction (`pipeline/models/make_42233_3.py`), built
-> from the official parts list and product photo, so every piece and count matches the
-> box. The step order is ours, not LEGO's booklet. Three new 2026 parts that the LDraw
+> The 3D model (`pipeline/models/make_42233_3.py`) follows the printed instructions:
+> the same 23 steps in the same order, with the same sub-builds (front unit 7–12, cab
+> 14–15, tipper-bed half 19–21 ×2). Every piece and count matches the box. Piece
+> positions are matched to the drawings by eye. Three new 2026 parts that the LDraw
 > library doesn't have yet are simplified shapes: the tipper-bed panels (7450, 7451) and
 > the cab frame (7944). With the official PDF, the steps can be re-ordered to match it
 > exactly. The scanner looks for "42233" on the box.
