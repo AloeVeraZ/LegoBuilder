@@ -19,9 +19,16 @@ if ! xcodebuild -project BuildLens.xcodeproj -scheme BuildLens -configuration Re
   exit 1
 fi
 
+# The glasses app goes inside the Mac app, which installs it on glasses plugged into this Mac.
+BUILT="$BUILD/Build/Products/Release/BuildLens.app"
+if [ -f ../glasses/dist/BuildLensGlasses.apk ] && [ -f ../glasses/dist/BuildLensGlasses.version ]; then
+  cp ../glasses/dist/BuildLensGlasses.apk ../glasses/dist/BuildLensGlasses.version "$BUILT/Contents/Resources/"
+  codesign --force --deep --sign - "$BUILT" >/dev/null 2>&1
+fi
+
 APP="/Applications/BuildLens.app"
 osascript -e 'tell application "BuildLens" to quit' >/dev/null 2>&1 || true
 rm -rf "$APP"
-ditto "$BUILD/Build/Products/Release/BuildLens.app" "$APP"
+ditto "$BUILT" "$APP"
 ln -sfn "$APP" "$HOME/Desktop/BuildLens"
 echo "Installed $APP, with a shortcut on the Desktop."

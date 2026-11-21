@@ -20,3 +20,4 @@ glasses/build/
 glasses/assets/
 glasses/debug.keystore
 glasses/dist/*.idsig
+release/

@@ -85,6 +85,8 @@ final class GlassesFeed {
             return String(parts[0])
         }.first
         guard let serial else { return false }
+        // Newly plugged-in glasses get this Mac's glasses app first, if theirs is missing or older.
+        GlassesInstaller.ensure(adb: adb, serial: serial)
         return run(adb, ["-s", serial, "forward", "tcp:\(port)", "tcp:\(port)"]) != nil
     }
 
