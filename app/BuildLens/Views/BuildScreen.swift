@@ -51,6 +51,11 @@ struct BuildScreen: View {
             }
             .padding(.horizontal, Theme.Spacing.sm)
             .padding(.vertical, Theme.Spacing.xs)
+
+            if app.showingFinished && !reduceMotion {
+                ConfettiBurst()
+                    .ignoresSafeArea()
+            }
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .onGeometryChange(for: Bool.self) { proxy in
@@ -62,6 +67,7 @@ struct BuildScreen: View {
         .onAppear {
             if mode == .viewer { app.enterViewer() }
         }
+        .onDisappear { app.leaveInstructions() }
         #if os(iOS)
         .statusBarHidden(mode == .ar)
         .sheet(isPresented: $showGlasses) {
@@ -204,13 +210,13 @@ struct BuildScreen: View {
         } else if mode == .ar && app.arPhase == .revealed {
             RevealCard()
         } else if app.showingFinished {
-            FinishedCard()
+            FinishedCard(onExit: { dismiss() })
         } else {
             stepOrMilestone
         }
         #else
         if app.showingFinished {
-            FinishedCard()
+            FinishedCard(onExit: { dismiss() })
         } else {
             stepOrMilestone
         }

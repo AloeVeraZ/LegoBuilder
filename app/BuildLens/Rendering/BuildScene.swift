@@ -26,8 +26,12 @@ final class BuildScene {
         let order: Int                          // pieces with the same order are pushed in together
     }
     private var waiting: [Int: Waiting] = [:]   // new pieces of the shown step
-    private static let slotTime = 0.9           // long enough to watch the piece travel and seat
-    private static let betweenSlots = 0.15
+    // Pressing Next is one movement of about a second: the waiting piece goes home while the
+    // next one comes in at the same pace, then its arrow appears.
+    private static let slotTime = 0.55
+    private static let finishSlotTime = 1.0     // the last pieces of the whole build take their time
+    private static let betweenSlots = 0.05
+    private static let arrowTime = 0.3
 
     /// Show earlier pieces faded so the new ones stand out.
     var dimPrevious = false
@@ -114,23 +118,25 @@ final class BuildScene {
             if slotting[i] == nil { entity.transform = Transform(matrix: local * model.instanceMatrices[i]) }
             entity.isEnabled = true
         }
-        let wait = slotIn(slotting) { Transform(matrix: local * self.model.instanceMatrices[$0]) }
+        let slotDuration = slotIn(slotting, time: Self.slotTime) { Transform(matrix: local * self.model.instanceMatrices[$0]) }
         let sameAssembly = previous >= 0 && model.steps[previous].assembly.id == info.assembly.id
         frame(step: info, glide: animated && sameAssembly)
         let moves = insertionMoves(for: info, local: local)
+        // The new pieces come in alongside the last piece going home, not after it.
+        let wait = max(0, slotDuration - Self.slotTime - Self.betweenSlots)
         bringIn(moves, local: local, animated: animated, after: wait)
-        let arrival = moves.map(\.delay).max().map { wait + $0 + 0.55 } ?? 0
+        let arrival = moves.map(\.delay).max().map { wait + $0 + Self.slotTime } ?? 0
         placeArrows(for: moves, local: local, after: animated ? arrival : 0)
     }
 
     /// Pushes waiting pieces home so you see them travel and seat: one group after another,
     /// in the order you would do it by hand. Returns how long the whole thing takes.
     @discardableResult
-    private func slotIn(_ pieces: [Int: Waiting], seated: (Int) -> Transform) -> Double {
+    private func slotIn(_ pieces: [Int: Waiting], time: Double, seated: (Int) -> Transform) -> Double {
         guard !pieces.isEmpty else { return 0 }
         let current = token
         let orders = Set(pieces.values.map(\.order)).sorted()
-        let stride = Self.slotTime + Self.betweenSlots
+        let stride = time + Self.betweenSlots
         for (i, held) in pieces {
             let entity = entities[i]
             entity.transform = held.hover
@@ -139,7 +145,7 @@ final class BuildScene {
             Task { @MainActor [weak self, weak entity] in
                 if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
                 guard let self, let entity, self.token == current else { return }
-                _ = entity.move(to: target, relativeTo: entity.parent, duration: Self.slotTime, timingFunction: .easeInOut)
+                _ = entity.move(to: target, relativeTo: entity.parent, duration: time, timingFunction: .easeInOut)
             }
         }
         return Double(orders.count) * stride
@@ -156,7 +162,7 @@ final class BuildScene {
             entities[i].stopAllAnimations()
             entities[i].model?.materials = materials(for: model.package.instances[i], look: .normal)
         }
-        let time = slotIn(waiting) { Transform(matrix: local * self.model.instanceMatrices[$0]) }
+        let time = slotIn(waiting, time: Self.slotTime) { Transform(matrix: local * self.model.instanceMatrices[$0]) }
         waiting.removeAll()
         for a in arrows { a.stopAllAnimations(); a.isEnabled = false }
         return time
@@ -177,16 +183,28 @@ final class BuildScene {
             entity.isEnabled = true
         }
         // The last pieces are pushed home before anything else happens.
-        let wait = slotIn(slotting) { Transform(matrix: self.model.instanceMatrices[$0]) }
+        let wait = slotIn(slotting, time: Self.finishSlotTime) { Transform(matrix: self.model.instanceMatrices[$0]) }
         for a in arrows { a.stopAllAnimations(); a.isEnabled = false }
         frame(assembly: model.package.assemblies[0])
         turntable.stopAllAnimations()
         turntable.transform = Transform()
-        if animated, wait == 0 {
-            turntable.transform = Transform(scale: .one, rotation: simd_quatf(angle: -.pi * 0.6, axis: [0, 1, 0]), translation: .zero)
-            _ = turntable.move(to: Transform(), relativeTo: root, duration: 1.0, timingFunction: .easeOut)
-        }
         return wait
+    }
+
+    /// One full turn of the finished model, to show it off.
+    func spin(duration: Double = 2.6) {
+        guard shownStep == -1 else { return }
+        let current = token
+        Task { @MainActor [weak self] in
+            let frames = Int(duration * 60)
+            for f in 1 ... frames {
+                guard let self, self.token == current else { return }
+                let t = Float(f) / Float(frames)
+                let eased = t * t * (3 - 2 * t)
+                self.turntable.orientation = simd_quatf(angle: eased * 2 * .pi, axis: [0, 1, 0])
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
     }
 
     /// Re-applies the current step (for example after toggling dimming).
@@ -333,8 +351,8 @@ final class BuildScene {
                 guard simd_length(push) > 1e-5 else { continue }
                 let order = authored.order ?? group
                 for i in authored.pieces where newIDs.contains(i) {
-                    moves.append(Move(piece: i, direction: -simd_normalize(push), distance: far, gap: gap,
-                                      delay: 0.1 + Double(min(order, 10)) * 0.4, group: group + 1,
+                    moves.append(Move(piece: i, direction: -simd_normalize(push), distance: far, gap: authored.gap ?? gap,
+                                      delay: Double(min(order, 10)) * 0.22, group: group + 1,
                                       order: order, still: authored.still ?? false))
                 }
             }
@@ -343,7 +361,7 @@ final class BuildScene {
 
         // A sub-build being attached: everything comes down together.
         if !step.isSubAssembly, ids.count > 1, ids.contains(where: subBuilt.contains) {
-            return ids.map { Move(piece: $0, direction: up, distance: far, gap: gap, delay: 0.15, group: 0, order: 0, still: false) }
+            return ids.map { Move(piece: $0, direction: up, distance: far, gap: gap, delay: 0, group: 0, order: 0, still: false) }
         }
 
         var moves: [Move] = []
@@ -372,7 +390,7 @@ final class BuildScene {
                 // The first piece of a build is the base: it just sits there, nothing to press it into.
                 let isBase = before.isEmpty && pass == .block
                 moves.append(Move(piece: i, direction: direction, distance: distance, gap: isBase ? 0 : gap,
-                                  delay: 0.12 + Double(min(order, 10)) * 0.4, group: moves.count + 1,
+                                  delay: Double(min(order, 10)) * 0.22, group: moves.count + 1,
                                   order: order, still: false))
                 order += 1
             }
@@ -395,13 +413,14 @@ final class BuildScene {
                 continue
             }
             var start = seated
-            start.translation += move.direction * move.distance
+            start.translation += move.direction * max(move.distance, move.gap * 2)
             entity.transform = start
             let delay = wait + move.delay
             Task { @MainActor [weak self, weak entity] in
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard let self, let entity, self.token == current else { return }
-                _ = entity.move(to: hover, relativeTo: entity.parent, duration: 0.5, timingFunction: .easeOut)
+                // Same pace and easing as the piece going home beside it.
+                _ = entity.move(to: hover, relativeTo: entity.parent, duration: Self.slotTime, timingFunction: .easeInOut)
             }
         }
     }
@@ -446,6 +465,7 @@ final class BuildScene {
             let tip = (lo + hi) / 2 + direction * (gap + reach + size * 1.0)
             if !spots.contains(where: { simd_distance($0.tip, tip) < size * 1.5 }) { spots.append((tip, direction)) }
         }
+        let current = token
         for (k, arrow) in arrows.enumerated() {
             arrow.stopAllAnimations()
             guard k < spots.count else { arrow.isEnabled = false; continue }
@@ -454,31 +474,47 @@ final class BuildScene {
                 ? simd_quatf(angle: .pi, axis: [1, 0, 0])
                 : simd_quatf(from: [0, 1, 0], to: direction)
             let base = Transform(scale: SIMD3(repeating: size), rotation: rotation, translation: spots[k].tip)
-            arrow.transform = base
-            arrow.isEnabled = delay <= 0
-            var pressed = base
-            pressed.translation -= direction * size * 0.4
-            let bob = FromToByAnimation<Transform>(
-                name: "bob",
-                from: base,
-                to: pressed,
-                duration: 0.75,
-                timing: .easeInOut,
-                isAdditive: false,
-                bindTarget: .transform,
-                repeatMode: .autoReverse
-            )
-            if let resource = try? AnimationResource.generate(with: bob) {
-                _ = arrow.playAnimation(resource.repeat())
+            guard delay > 0 else {
+                arrow.transform = base
+                arrow.isEnabled = true
+                bounce(arrow, from: base, along: direction, size: size)
+                continue
+            }
+            // The arrow is not just suddenly there: it grows in from a little further out,
+            // once the piece has arrived, and then starts to bounce.
+            arrow.isEnabled = false
+            Task { @MainActor [weak self, weak arrow] in
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard let self, let arrow, self.token == current else { return }
+                var small = base
+                small.scale = SIMD3(repeating: size * 0.05)
+                small.translation += direction * size * 1.2
+                arrow.transform = small
+                arrow.isEnabled = true
+                _ = arrow.move(to: base, relativeTo: arrow.parent, duration: Self.arrowTime, timingFunction: .easeOut)
+                try? await Task.sleep(nanoseconds: UInt64((Self.arrowTime + 0.03) * 1_000_000_000))
+                guard self.token == current else { return }
+                self.bounce(arrow, from: base, along: direction, size: size)
             }
         }
-        guard delay > 0 else { return }
-        let current = token
-        let shown = spots.count
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard let self, self.token == current else { return }
-            for arrow in self.arrows.prefix(shown) { arrow.isEnabled = true }
+    }
+
+    /// A small, steady bounce towards the piece. The piece itself stays still.
+    private func bounce(_ arrow: Entity, from base: Transform, along direction: SIMD3<Float>, size: Float) {
+        var pressed = base
+        pressed.translation -= direction * size * 0.4
+        let bob = FromToByAnimation<Transform>(
+            name: "bob",
+            from: base,
+            to: pressed,
+            duration: 0.75,
+            timing: .easeInOut,
+            isAdditive: false,
+            bindTarget: .transform,
+            repeatMode: .autoReverse
+        )
+        if let resource = try? AnimationResource.generate(with: bob) {
+            _ = arrow.playAnimation(resource.repeat())
         }
     }
 

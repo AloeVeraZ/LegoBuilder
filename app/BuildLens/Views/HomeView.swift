@@ -6,7 +6,6 @@ struct HomeView: View {
     @Environment(AppModel.self) private var app
     #if os(iOS)
     @State private var presented: BuildScreen.Mode?
-    @State private var showGlasses = false
     #else
     @State private var path: [BuildScreen.Mode] = []
     @Environment(\.openWindow) private var openWindow
@@ -20,11 +19,6 @@ struct HomeView: View {
             .fullScreenCover(item: $presented) { mode in
                 BuildScreen(initialMode: mode)
                     .environment(app)
-            }
-            .sheet(isPresented: $showGlasses) {
-                GlassesPreview()
-                    .environment(app)
-                    .presentationDetents([.medium, .large])
             }
         #else
         NavigationStack(path: $path) {
@@ -134,11 +128,9 @@ struct HomeView: View {
             }
             .frame(minHeight: Theme.Size.hitTarget)
 
-            if app.glassesConnected || !app.syncPeers.isEmpty {
+            // The glasses show up on the Open tile itself, so only other devices are listed here.
+            if !app.syncPeers.isEmpty {
                 HStack(spacing: Theme.Spacing.xs) {
-                    if app.glassesConnected {
-                        StatusChip(symbol: "eyeglasses", text: "Glasses linked", tint: Theme.Palette.green)
-                    }
                     if !app.syncPeers.isEmpty {
                         StatusChip(symbol: "link", text: "Synced with \(app.syncPeers.joined(separator: ", "))", tint: Theme.Palette.green)
                     }
@@ -221,7 +213,8 @@ struct HomeView: View {
         }
     }
 
-    /// The secondary actions, as tappable tiles.
+    /// One way into the instructions. When the glasses are linked they show the same step
+    /// by themselves, so there is nothing separate to open for them.
     private var shortcuts: some View {
         HStack(spacing: Theme.Spacing.sm) {
             #if os(iOS)
@@ -229,44 +222,33 @@ struct HomeView: View {
                 presented = .viewer
             } label: {
                 BentoTile(
-                    eyebrow: "No camera",
-                    value: "3D",
-                    symbol: "cube",
-                    caption: "Open instructions",
-                    fill: Theme.Palette.surface,
-                    ink: Theme.Palette.textPrimary,
+                    eyebrow: app.glassesConnected ? "Phone + glasses" : "Instructions",
+                    value: "Open",
+                    symbol: app.glassesConnected ? "eyeglasses" : "cube",
+                    caption: app.glassesConnected ? "Shows on your glasses too" : "Step by step in 3D",
+                    fill: app.glassesConnected ? Theme.Palette.green : Theme.Palette.surface,
+                    ink: app.glassesConnected ? Theme.Palette.ink : Theme.Palette.textPrimary,
                     isAction: true
                 )
             }
-            .accessibilityLabel("Open 3D instructions")
-
-            Button {
-                showGlasses = true
-            } label: {
-                glassesTile
-            }
-            .accessibilityLabel("Glasses preview")
+            .accessibilityLabel(app.glassesConnected ? "Open instructions on phone and glasses" : "Open instructions")
             #else
             Button {
                 openWindow(id: "glasses")
             } label: {
-                glassesTile
+                BentoTile(
+                    eyebrow: "Glasses",
+                    value: app.glassesConnected ? "Linked" : "Preview",
+                    symbol: "eyeglasses",
+                    caption: app.glassesConnected ? "Showing your step" : "See the display",
+                    fill: Theme.Palette.green,
+                    isAction: true
+                )
             }
             .accessibilityLabel("Glasses preview window")
             #endif
         }
         .buttonStyle(CardButtonStyle())
-    }
-
-    private var glassesTile: some View {
-        BentoTile(
-            eyebrow: "Glasses",
-            value: app.glassesConnected ? "Linked" : "Preview",
-            symbol: "eyeglasses",
-            caption: app.glassesConnected ? "Showing your step" : "See the display",
-            fill: Theme.Palette.green,
-            isAction: true
-        )
     }
 
     // MARK: main action

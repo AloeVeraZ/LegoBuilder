@@ -285,12 +285,15 @@ SPLIT_FLIPPED = rot(-X, Z)
 # place along this line, shows an arrow, and slots it in on the next step.
 DOWN, FROM_RIGHT, FROM_LEFT, FROM_FRONT, FROM_BEHIND = Y, -X, X, Z, -Z
 
-def push(direction, line, order=None, still=False):
+def push(direction, line, order=None, still=False, gap=None):
     """order: pieces of a step go on one after another unless they share an order number.
-    still: the piece is simply there waiting instead of gliding in."""
+    still: the piece is simply there waiting instead of gliding in.
+    gap: how far off its place it waits (LDU) when the usual 30 would leave it inside a
+    part that arrives in the same step."""
     meta = "0 !PUSH " + " ".join(f"{v:g}" for v in direction)
     if order is not None: meta += f" ORDER {order}"
     if still: meta += " STILL"
+    if gap is not None: meta += f" GAP {gap:g}"
     return meta + "\n" + line
 
 def axle_pins(z, sides=("R", "L"), order=None):
@@ -326,8 +329,10 @@ front_unit = model("Front Unit.ldr", [
     axle_pins(FRONT_AXLE_Z, sides="L"),                                                          # 10
     [push(DOWN, ref(YEL, (0, UPPER, FRONT_AXLE_Z), TRIPLE, "63869.dat")),
      push(FROM_RIGHT, ref(BLK, (0, UPPER, FRONT_AXLE_Z), SHAFT_X, "32062.dat"))],                # 11
+    # The axle waits fully clear of where the block's arm comes down (the arm's outer face
+    # is 20 out and the axle is 40 long), otherwise the arm would drop through its end.
     [push(DOWN, ref(BLK, (0, UPPER, PIVOT_Z), SPLIT_FRONT, "92907.dat")),
-     push(FROM_RIGHT, ref(BLK, (0, AXLE_Y, FRONT_Z + 20), SHAFT_X, "32062.dat"))],               # 12
+     push(FROM_RIGHT, ref(BLK, (0, AXLE_Y, FRONT_Z + 20), SHAFT_X, "32062.dat"), gap=48)],       # 12
 ])
 
 # The triple connector's three holes run across the truck at this height, pointing along it.

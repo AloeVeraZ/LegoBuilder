@@ -535,10 +535,13 @@ class StepBuilder:
                     # into place along this direction, given in this file's own LDraw axes.
                     # ORDER n: pieces with the same n go on together, lower n first.
                     # STILL: the piece is simply there waiting, it does not glide in.
+                    # GAP n: how far off its place it waits, in LDU, when the usual distance
+                    #        would leave it inside a part that arrives in the same step.
                     try:
                         extra = [t.upper() for t in toks[5:]]
                         push = {"dir": [float(v) for v in toks[2:5]], "still": "STILL" in extra,
-                                "order": int(extra[extra.index("ORDER") + 1]) if "ORDER" in extra else None}
+                                "order": int(extra[extra.index("ORDER") + 1]) if "ORDER" in extra else None,
+                                "gap": float(extra[extra.index("GAP") + 1]) if "GAP" in extra else None}
                     except (ValueError, IndexError):
                         push = None
                 continue
@@ -582,6 +585,8 @@ class StepBuilder:
                 move = {"pieces": list(ids), "push": [d[0], -d[1], -d[2]], "order": n}
                 if push["still"]:
                     move["still"] = True
+                if push["gap"] is not None:
+                    move["gap"] = round(push["gap"] * LDU, 6)
                 moves.append(move)
             push = None
             added += ids

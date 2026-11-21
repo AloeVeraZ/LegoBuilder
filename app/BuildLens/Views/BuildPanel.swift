@@ -17,10 +17,13 @@ struct BuildPanel: View {
                 Slider(
                     value: Binding(
                         get: { Double(app.step) },
-                        set: { app.go(to: Int($0.rounded())) }
+                        set: { app.scrub(to: Int($0.rounded())) }
                     ),
                     in: 0 ... Double(app.stepCount - 1),
-                    step: 1
+                    step: 1,
+                    onEditingChanged: { dragging in
+                        if !dragging { app.endScrub() }
+                    }
                 )
                 .accessibilityLabel("Step")
                 .accessibilityValue("\(app.step + 1) of \(app.stepCount)")

@@ -66,6 +66,8 @@ struct BuildPackage: Decodable {
         let order: Int?
         /// The pieces are simply there waiting instead of gliding in.
         let still: Bool?
+        /// How far off their place the pieces wait, in metres, when it differs from the usual.
+        let gap: Float?
     }
 
     let setInfo: SetInfo

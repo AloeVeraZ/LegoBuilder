@@ -99,9 +99,73 @@ struct MilestoneCard: View {
     }
 }
 
+/// A burst of brick-coloured confetti from the bottom of the screen when the build is done.
+/// Drawn in one canvas; it stops updating once every piece has fallen out of view.
+struct ConfettiBurst: View {
+    private struct Piece {
+        let angle, speed, spin, size, delay: Double
+        let colour: Color
+    }
+
+    private static let colours = [Theme.Palette.yellow, Theme.Palette.blue, Theme.Palette.green, Theme.Palette.red, Color.white]
+    private static let life = 3.6
+    private let pieces: [Piece] = (0 ..< 110).map { n in
+        // Fixed pseudo-random spread, so the burst looks the same each time and costs nothing to set up.
+        func unit(_ salt: Double) -> Double {
+            let x = sin(Double(n) * 12.9898 + salt * 78.233) * 43758.5453
+            return x - x.rounded(.down)
+        }
+        return Piece(angle: -.pi / 2 + (unit(1) - 0.5) * 1.5, speed: 620 + unit(2) * 520, spin: (unit(3) - 0.5) * 14,
+                     size: 6 + unit(4) * 7, delay: unit(5) * 0.25, colour: colours[n % colours.count])
+    }
+    @State private var start = Date()
+    @State private var over = false
+
+    var body: some View {
+        if !over { burst }
+    }
+
+    /// Redraws every frame only while there is confetti in the air, then removes itself.
+    private var burst: some View {
+        TimelineView(.animation) { timeline in
+            let elapsed = timeline.date.timeIntervalSince(start)
+            Canvas { context, size in
+                guard elapsed < Self.life else { return }
+                let origin = CGPoint(x: size.width / 2, y: size.height * 0.92)
+                for piece in pieces {
+                    let t = elapsed - piece.delay
+                    guard t > 0 else { continue }
+                    // Thrown up and out, slowed by the air, pulled down by gravity.
+                    let drag = (1 - exp(-1.6 * t)) / 1.6
+                    let x = origin.x + cos(piece.angle) * piece.speed * drag
+                    let y = origin.y + sin(piece.angle) * piece.speed * drag + 420 * t * t
+                    guard y < size.height + 20 else { continue }
+                    var mark = context
+                    mark.opacity = min(1, (Self.life - elapsed) * 1.5)
+                    mark.translateBy(x: x, y: y)
+                    mark.rotate(by: .radians(piece.spin * t))
+                    // Narrowing and widening reads as the piece tumbling.
+                    let width = piece.size * abs(cos(piece.spin * t * 0.7)) + 1.5
+                    mark.fill(Path(CGRect(x: -width / 2, y: -piece.size / 2, width: width, height: piece.size * 0.6)),
+                              with: .color(piece.colour))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .task {
+            start = Date()
+            try? await Task.sleep(nanoseconds: UInt64(Self.life * 1_000_000_000))
+            over = true
+        }
+    }
+}
+
 /// Shown after the last step.
 struct FinishedCard: View {
     @Environment(AppModel.self) private var app
+    /// Leaves the instructions. The finished truck stays on the glasses.
+    var onExit: (() -> Void)?
 
     var body: some View {
         VStack(spacing: Theme.Spacing.sm) {
@@ -118,20 +182,28 @@ struct FinishedCard: View {
             }
             .multilineTextAlignment(.center)
 
-            HStack(spacing: Theme.Spacing.xs) {
-                Button {
-                    app.back()
-                } label: {
-                    Label("Last step", systemImage: "chevron.left")
-                }
-                .buttonStyle(PillButtonStyle(kind: .secondary))
+            VStack(spacing: Theme.Spacing.xs) {
+                HStack(spacing: Theme.Spacing.xs) {
+                    Button {
+                        app.back()
+                    } label: {
+                        Label("Last step", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .secondary))
 
-                Button {
-                    app.restart()
-                } label: {
-                    Label("Build again", systemImage: "arrow.counterclockwise")
+                    Button {
+                        app.restart()
+                    } label: {
+                        Label("Build again", systemImage: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .secondary))
                 }
-                .buttonStyle(PillButtonStyle(kind: .primary))
+                if let onExit {
+                    Button(action: onExit) {
+                        PillLabel(title: "Exit", systemImage: "checkmark")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .primary))
+                }
             }
         }
         .frame(maxWidth: .infinity)

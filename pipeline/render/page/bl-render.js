@@ -204,8 +204,8 @@ BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview', lift = 0, p
   const local = mat4(asm.matrix).invert();
   const gap = waitingGap();
   const offset = new Map();           // piece id -> how far it is from its seat
-  const moves = (pkg.steps[stepIndex].moves || []).map(m => ({ pieces: m.pieces, push: new THREE.Vector3(...m.push).normalize() }));
-  if (lift > 0) for (const m of moves) for (const id of m.pieces) offset.set(id, m.push.clone().multiplyScalar(-gap * lift));
+  const moves = (pkg.steps[stepIndex].moves || []).map(m => ({ pieces: m.pieces, gap: m.gap ?? gap, push: new THREE.Vector3(...m.push).normalize() }));
+  if (lift > 0) for (const m of moves) for (const id of m.pieces) offset.set(id, m.push.clone().multiplyScalar(-m.gap * lift));
   for (const id of visible) {
     const isNew = added.has(id);
     const at = offset.has(id) ? new THREE.Matrix4().makeTranslation(offset.get(id)).multiply(local) : local;
@@ -214,13 +214,13 @@ BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview', lift = 0, p
   }
   // The camera stays put for a run of steps and only pulls back when the build has
   // outgrown the view (same rule as the app); the frame leaves room for waiting pieces.
-  const view = hud ? stageBounds(stepIndex) : asm.bounds;
+  const view = stageBounds(stepIndex);
   const lo = view[0].map(v => v - gap), hi = view[1].map(v => v + gap);
   if (lift >= 1) {
     const size = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 * 0.13;
     const tips = [];
     for (const m of moves) {
-      const box = boundsOf(m.pieces, local).translate(m.push.clone().multiplyScalar(-gap));
+      const box = boundsOf(m.pieces, local).translate(m.push.clone().multiplyScalar(-m.gap));
       const centre = box.getCenter(new THREE.Vector3());
       if (tips.some(t => t.distanceTo(centre) < size * 1.5)) continue;     // rim and tyre share one arrow
       tips.push(centre);

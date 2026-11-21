@@ -4,13 +4,19 @@ import Network
 /// Links the app to the BuildLens glasses app (MicroLumin M6) over Wi-Fi.
 ///
 /// The glasses app advertises `_buildlens-glass._tcp` and speaks newline-separated JSON:
-/// `{"step": 4, "finished": false}`. This class finds it with Bonjour, connects, sends the
+/// `{"step": 4, "finished": false}`, plus `"replay": true` to show a step again and
+/// `"open": true` while the instructions are open on the phone. This class finds it with Bonjour, connects, sends the
 /// current step whenever it changes, and reports steps changed on the glasses (touchpad,
 /// ring, swipe). Phone and glasses must be on the same Wi-Fi (join the glasses to it in MLDemo).
 @MainActor
 final class GlassesLink {
     var onConnectionChange: ((Bool) -> Void)?
-    var onRemoteStep: ((Int, Bool) -> Void)?
+    /// True while the instructions are on screen on the phone. Every message then carries
+    /// `"open": true`, which makes the glasses bring their own screen up if it isn't.
+    var instructionsOpen = false
+
+    /// Step, finished, replay.
+    var onRemoteStep: ((Int, Bool, Bool) -> Void)?
 
     private var browser: NWBrowser?
     private var connection: NWConnection?
@@ -28,10 +34,12 @@ final class GlassesLink {
         self.browser = browser
     }
 
-    func send(step: Int, finished: Bool) {
+    /// `replay`: show the same step again from the start (the glasses' double click, or the
+    /// phone's replay button).
+    func send(step: Int, finished: Bool, replay: Bool = false) {
         last = (step, finished)
         guard let connection, connection.state == .ready else { return }
-        let line = "{\"step\":\(step),\"finished\":\(finished)}\n"
+        let line = "{\"step\":\(step),\"finished\":\(finished)\(replay ? ",\"replay\":true" : "")\(instructionsOpen ? ",\"open\":true" : "")}\n"
         connection.send(content: Data(line.utf8), completion: .contentProcessed { _ in })
     }
 
@@ -78,6 +86,7 @@ final class GlassesLink {
     private struct Message: Decodable {
         let step: Int
         let finished: Bool?
+        let replay: Bool?
     }
 
     private func drainLines() {
@@ -85,7 +94,7 @@ final class GlassesLink {
             let line = buffer[buffer.startIndex ..< newline]
             buffer.removeSubrange(buffer.startIndex ... newline)
             if let message = try? JSONDecoder().decode(Message.self, from: Data(line)) {
-                onRemoteStep?(message.step, message.finished ?? false)
+                onRemoteStep?(message.step, message.finished ?? false, message.replay ?? false)
             }
         }
     }

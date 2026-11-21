@@ -1,19 +1,19 @@
 package com.buildlens.glasses;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.net.nsd.NsdManager;
-import android.net.nsd.NsdServiceInfo;
-import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
+import android.util.SparseIntArray;
 import android.view.GestureDetector;
-import android.view.Gravity;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -26,64 +26,110 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * BuildLens on the MicroLumin M6 glasses (Android 9, 640x480, black = see-through).
  *
- * Shows the current building step: a green line-art frame of the model with the new pieces
- * filled in, the step number and the pieces to add. Next / back with the temple touchpad,
- * the ring, swipes or taps. Follows the iPhone app over Wi-Fi: it runs a small TCP server
- * (newline-separated JSON, {"step": N}) and advertises it as _buildlens-glass._tcp so the
- * phone finds it automatically. Steps changed here are sent back to the phone.
+ * Shows the current building step the way the phone does: the new piece waits just off
+ * its place while an arrow bounces towards where it goes, and moving on slots it in before
+ * the next piece appears.
+ *
+ * Controls, on whatever the glasses have (side button, touchpad tap, ring):
+ *   one click     next step
+ *   two clicks    show this step again from the start
+ *   three clicks  back one step
+ * Swipes and arrow keys also go forward and back directly. Every key and touch is logged so
+ * unknown buttons can be mapped (see KEYS below): adb logcat -s BuildLens
+ *
+ * Battery: nothing is rendered here. Every picture was drawn on a computer and is only
+ * shown, each one decoded once; the bounce is two pictures swapped by a timer and stops
+ * after a while with no input. The phone link lives in LinkService.
  */
-public class MainActivity extends Activity {
-    static final String TAG = "BuildLens";
-    static final int PORT = 52733;
+public class MainActivity extends Activity implements LinkService.Listener {
+    static final String TAG = LinkService.TAG;
     static final int GREEN = Color.rgb(92, 255, 128);
 
+    /** Clicks closer together than this count as one double or triple click. */
+    private static final int CLICK_WINDOW_MS = 400;
+    private static final int BOUNCE_MS = 450, HALF_MS = 110, SEATED_MS = 320, BLINK_MS = 120;
+    /** The arrow stops bouncing after this long without input; any input starts it again. */
+    private static final int BOUNCE_FOR_MS = 20_000;
+    /** With nothing happening for this long the display is allowed to sleep, to save the battery. */
+    private static final int AWAKE_FOR_MS = 5 * 60_000;
+
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final List<Socket> clients = new CopyOnWriteArrayList<>();
     private JSONArray steps;
     private String setName = "";
-    private int step = 0;
-    private boolean finished = false;
-    private int shownStep = -1;          // what is on the display now (-1 = nothing yet)
-    private int animation = 0;           // bumped on every change so stale frames are dropped
-    private static final int BOUNCE_MS = 450, HALF_MS = 110, SEATED_MS = 320;
+
+    private int shownStep = -1;             // what the display shows now (-1 = nothing yet)
+    private boolean shownFinished = false;
+    private int animation = 0;              // bumped on every change so stale timers do nothing
+    private Bitmap waitFrame, pressedFrame; // the two pictures of the current step's bounce
+    private long bounceUntil;
+    private boolean bouncing;
+    private int clicks;
 
     private ImageView frame;
     private TextView header, sub, parts, status;
-    private ServerSocket server;
-    private NsdManager nsd;
-    private NsdManager.RegistrationListener nsdListener;
-    private WifiManager.MulticastLock multicastLock;
     private GestureDetector gestures;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                | WindowManager.LayoutParams.FLAG_FULLSCREEN
+                | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+        LinkService.start(this);
         loadSteps();
         buildUi();
         gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            @Override public boolean onSingleTapUp(MotionEvent e) { next(true); return true; }
+            @Override public boolean onSingleTapUp(MotionEvent e) { click(); return true; }
             @Override public boolean onFling(MotionEvent a, MotionEvent b, float vx, float vy) {
-                if (Math.abs(vx) > Math.abs(vy)) { if (vx < 0) next(true); else back(true); }
-                else { if (vy < 0) next(true); else back(true); }
+                if (!directStepAllowed()) return true;
+                boolean forward = Math.abs(vx) > Math.abs(vy) ? vx < 0 : vy < 0;
+                if (forward) next(); else back();
                 return true;
             }
         });
+        logInputDevices();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        LinkService.setListener(this);
         show();
-        startServer();
+    }
+
+    @Override
+    protected void onPause() {
+        LinkService.setListener(null);
+        animation++;                        // stop every timer while nothing is visible
+        bouncing = false;
+        main.removeCallbacks(resolveClicks);
+        main.removeCallbacks(allowSleep);
+        clicks = 0;
+        super.onPause();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+    }
+
+    // ------------------------------------------------------------ phone link
+    @Override
+    public void onRemoteStep(boolean replay) {
+        if (replay) replayStep(); else show();
+    }
+
+    @Override
+    public void onLinkChanged() {
+        status.setText(LinkService.phoneLinked() ? "phone: linked" : "phone: not linked");
     }
 
     // ------------------------------------------------------------ data
@@ -98,6 +144,25 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             Log.e(TAG, "steps.json", e);
             steps = new JSONArray();
+        }
+    }
+
+    private String frameOf(int index) throws Exception {
+        return steps.getJSONObject(index).getString("frame");
+    }
+
+    private static String variant(String asset, String suffix) {
+        return asset.replace(".png", suffix + ".png");
+    }
+
+    private Bitmap load(String asset) {
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inPreferredConfig = Bitmap.Config.RGB_565;     // half the memory; the display is one colour
+        try (InputStream in = getAssets().open(asset)) {
+            return BitmapFactory.decodeStream(in, null, options);
+        } catch (Exception e) {
+            Log.e(TAG, "frame " + asset, e);
+            return null;
         }
     }
 
@@ -137,18 +202,22 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
+    /** Brings the display in line with the current step. Only a real change animates. */
     private void show() {
         int count = steps.length();
         if (count == 0) { header.setText("NO STEPS"); return; }
-        step = Math.max(0, Math.min(step, count - 1));
+        int step = Math.max(0, Math.min(LinkService.step, count - 1));
+        boolean finished = LinkService.finished;
+        LinkService.step = step;
+        onLinkChanged();
+        if (step == shownStep && finished == shownFinished) { wake(); return; }
+        stayAwake();
         try {
             if (finished) {
                 header.setText("DONE ✓");
                 sub.setText(setName.toUpperCase());
                 parts.setText("");
-                animation++;
-                shownStep = -1;
-                frame.setImageBitmap(null);
+                playFinished(step);
             } else {
                 JSONObject s = steps.getJSONObject(step);
                 header.setText("STEP " + (step + 1) + "/" + count);
@@ -159,183 +228,191 @@ public class MainActivity extends Activity {
                 for (int i = 0; i < lines.length() && i < 4; i++) b.append(lines.getString(i)).append('\n');
                 if (lines.length() > 4) b.append("+").append(lines.length() - 4).append(" MORE\n");
                 parts.setText(b.toString().trim());
-                // show() also runs when the phone links or echoes a step back; only a real
-                // change of step restarts the animation.
-                if (step != shownStep) playStep(s.getString("frame"));
+                playStep(step, shownStep >= 0 && step == shownStep + 1 && !shownFinished);
             }
         } catch (Exception e) {
             Log.e(TAG, "show", e);
         }
-        status.setText(clients.isEmpty() ? "phone: not linked" : "phone: linked");
-    }
-
-    private void setFrame(String asset) {
-        try (InputStream in = getAssets().open(asset)) {
-            frame.setImageBitmap(BitmapFactory.decodeStream(in));
-        } catch (Exception e) {
-            Log.e(TAG, "frame " + asset, e);
-        }
-    }
-
-    private String variant(String asset, String suffix) {
-        return asset.replace(".png", suffix + ".png");
-    }
-
-    /**
-     * Shows a step the way the phone does: the new piece waits off its place while the
-     * arrow bounces. Coming from the step before, that step's piece first slots in
-     * (part-way, then seated) before the new one appears.
-     */
-    private void playStep(final String asset) {
-        final int run = ++animation;
-        int delay = 0;
-        if (step == shownStep + 1 && shownStep >= 0) {
-            try {
-                final String before = steps.getJSONObject(shownStep).getString("frame");
-                setFrame(variant(before, "-a"));
-                main.postDelayed(() -> { if (run == animation) setFrame(variant(before, "-b")); }, HALF_MS);
-                delay = HALF_MS + SEATED_MS;
-            } catch (Exception e) {
-                Log.e(TAG, "slot-in", e);
-            }
-        }
         shownStep = step;
-        main.postDelayed(() -> bounce(asset, run, false), delay);
+        shownFinished = finished;
     }
 
-    private void bounce(final String asset, final int run, final boolean pressed) {
-        if (run != animation) return;
-        setFrame(pressed ? variant(asset, "-w") : asset);
-        main.postDelayed(() -> bounce(asset, run, !pressed), BOUNCE_MS);
-    }
-
-    private void next(boolean fromHere) {
-        if (finished) return;
-        if (step + 1 < steps.length()) step++; else finished = true;
-        show();
-        if (fromHere) broadcast();
-    }
-
-    private void back(boolean fromHere) {
-        if (finished) finished = false; else if (step > 0) step--;
-        show();
-        if (fromHere) broadcast();
-    }
-
-    // Temple touchpad and ring arrive as key events. Every code is logged so unknown buttons
-    // can be mapped: adb logcat -s BuildLens
-    @Override
-    public boolean onKeyDown(int code, KeyEvent e) {
-        Log.i(TAG, "key down " + code + " " + KeyEvent.keyCodeToString(code));
-        switch (code) {
-            case KeyEvent.KEYCODE_DPAD_RIGHT: case KeyEvent.KEYCODE_DPAD_DOWN: case KeyEvent.KEYCODE_ENTER:
-            case KeyEvent.KEYCODE_DPAD_CENTER: case KeyEvent.KEYCODE_PAGE_DOWN: case KeyEvent.KEYCODE_MEDIA_NEXT:
-            case KeyEvent.KEYCODE_SPACE: case KeyEvent.KEYCODE_TAB: case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-                next(true); return true;
-            case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_PAGE_UP:
-            case KeyEvent.KEYCODE_MEDIA_PREVIOUS: case KeyEvent.KEYCODE_DEL:
-                back(true); return true;
-            default:
-                return super.onKeyDown(code, e);
+    // ------------------------------------------------------------ pictures
+    /**
+     * The new piece waits off its place while the arrow bounces. Coming from the step
+     * before, that step's piece first slots in (part-way, then seated).
+     */
+    private void playStep(final int step, boolean slotInPrevious) throws Exception {
+        final int run = ++animation;
+        final String asset = frameOf(step);
+        int delay = 0;
+        bouncing = false;
+        if (slotInPrevious) {
+            final String before = frameOf(step - 1);
+            frame.setImageBitmap(load(variant(before, "-a")));
+            main.postDelayed(() -> { if (run == animation) frame.setImageBitmap(load(variant(before, "-b"))); }, HALF_MS);
+            delay = HALF_MS + SEATED_MS;
         }
+        main.postDelayed(() -> {
+            if (run != animation) return;
+            waitFrame = load(asset);
+            pressedFrame = load(variant(asset, "-w"));
+            startBounce(run);
+        }, delay);
+    }
+
+    /** The last piece slots in, and the finished model stays on the display. */
+    private void playFinished(int step) throws Exception {
+        final int run = ++animation;
+        final String last = frameOf(step);
+        bouncing = false;
+        frame.setImageBitmap(load(variant(last, "-a")));
+        main.postDelayed(() -> { if (run == animation) frame.setImageBitmap(load(variant(last, "-b"))); }, HALF_MS * 2);
+    }
+
+    /** Two clicks: the step again from the start, with a short blank so it reads as a restart. */
+    private void replayStep() {
+        stayAwake();
+        if (LinkService.finished || shownStep < 0 || waitFrame == null) { show(); return; }
+        final int run = ++animation;
+        bouncing = false;
+        frame.setImageBitmap(null);
+        main.postDelayed(() -> { if (run == animation) startBounce(run); }, BLINK_MS);
+    }
+
+    private void startBounce(int run) {
+        bounceUntil = SystemClock.uptimeMillis() + BOUNCE_FOR_MS;
+        bouncing = true;
+        bounce(run, false);
+    }
+
+    private void bounce(final int run, final boolean pressed) {
+        if (run != animation) return;
+        if (SystemClock.uptimeMillis() > bounceUntil) {     // idle: leave the still picture up
+            frame.setImageBitmap(waitFrame);
+            bouncing = false;
+            return;
+        }
+        frame.setImageBitmap(pressed ? pressedFrame : waitFrame);
+        main.postDelayed(() -> bounce(run, !pressed), BOUNCE_MS);
+    }
+
+    private final Runnable allowSleep = () -> getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+    /** The display stays on while someone is building, and may sleep once they have stopped. */
+    private void stayAwake() {
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        main.removeCallbacks(allowSleep);
+        main.postDelayed(allowSleep, AWAKE_FOR_MS);
+    }
+
+    /** Any input brings a stopped bounce back. */
+    private void wake() {
+        stayAwake();
+        if (LinkService.finished || waitFrame == null) return;
+        if (bouncing) bounceUntil = SystemClock.uptimeMillis() + BOUNCE_FOR_MS;
+        else startBounce(++animation);
+    }
+
+    // ------------------------------------------------------------ actions
+    private void next() {
+        if (LinkService.finished) return;
+        if (LinkService.step + 1 < steps.length()) LinkService.step++; else LinkService.finished = true;
+        show();
+        LinkService.send(false);
+    }
+
+    private void back() {
+        if (LinkService.finished) LinkService.finished = false;
+        else if (LinkService.step > 0) LinkService.step--;
+        else { wake(); return; }
+        show();
+        LinkService.send(false);
+    }
+
+    private void replay() {
+        replayStep();
+        LinkService.send(true);
+    }
+
+    // ------------------------------------------------------------ input
+    private final Runnable resolveClicks = () -> {
+        int n = clicks;
+        clicks = 0;
+        if (n == 1) next(); else if (n == 2) replay(); else if (n >= 3) back();
+    };
+
+    /** One press of the main button or a tap. Waits a moment to see if more follow. */
+    private void click() {
+        clicks++;
+        main.removeCallbacks(resolveClicks);
+        if (clicks >= 3) resolveClicks.run();
+        else main.postDelayed(resolveClicks, CLICK_WINDOW_MS);
+    }
+
+    // What each key does. Nothing public documents the M6's key codes, so this follows what
+    // similar glasses send (tap = centre/enter, swipes = left/right) and is the one place to
+    // edit once `adb logcat -s BuildLens` shows what the real buttons send.
+    private static final int CLICK = 1, NEXT = 2, BACK = 3;
+    private static final SparseIntArray KEYS = new SparseIntArray();
+    static {
+        for (int code : new int[] {KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
+                KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK,
+                KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_CAMERA}) KEYS.put(code, CLICK);
+        for (int code : new int[] {KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_PAGE_DOWN,
+                KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_TAB}) KEYS.put(code, NEXT);
+        for (int code : new int[] {KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_PAGE_UP,
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_DEL}) KEYS.put(code, BACK);
+    }
+    /** A swipe on a touchpad often arrives as a burst of arrow keys: one step per burst. */
+    private static final int STEP_EVERY_MS = 300;
+    private long lastDirectStep;
+
+    private boolean directStepAllowed() {
+        long now = SystemClock.uptimeMillis();
+        if (now - lastDirectStep < STEP_EVERY_MS) return false;
+        lastDirectStep = now;
+        return true;
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        int code = e.getKeyCode();
+        Log.i(TAG, "key " + (e.getAction() == KeyEvent.ACTION_DOWN ? "down " : "up ") + KeyEvent.keyCodeToString(code)
+                + " scan " + e.getScanCode() + " repeat " + e.getRepeatCount() + " flags 0x" + Integer.toHexString(e.getFlags())
+                + " source 0x" + Integer.toHexString(e.getSource()) + " held " + (e.getEventTime() - e.getDownTime()) + "ms"
+                + " device " + (e.getDevice() == null ? "?" : e.getDevice().getName()));
+        int action = KEYS.get(code);
+        // Some glasses send their double tap as a Back key. Use it to go back a step while
+        // there is one to go back to; on step 1 it leaves the app as usual.
+        if (code == KeyEvent.KEYCODE_BACK && (LinkService.step > 0 || LinkService.finished)) action = BACK;
+        if (action == 0) return super.dispatchKeyEvent(e);
+        // Clicks count when the key comes up, so a held key is one click; arrows act on the way down.
+        if (action == CLICK) {
+            if (e.getAction() == KeyEvent.ACTION_UP && !e.isCanceled()) click();
+        } else if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0 && directStepAllowed()) {
+            if (action == NEXT) next(); else back();
+        }
+        return true;
+    }
+
+    private void logInputDevices() {
+        for (int id : InputDevice.getDeviceIds()) {
+            InputDevice d = InputDevice.getDevice(id);
+            if (d != null) Log.i(TAG, "input device " + d.getName() + " sources 0x" + Integer.toHexString(d.getSources())
+                    + " keyboard " + d.getKeyboardType());
+        }
+    }
+
+    @Override
+    public boolean onTrackballEvent(MotionEvent e) {
+        return gestures.onTouchEvent(e) || super.onTrackballEvent(e);
     }
 
     @Override
     public boolean onGenericMotionEvent(MotionEvent e) {
+        Log.i(TAG, "motion " + MotionEvent.actionToString(e.getAction()) + " source 0x" + Integer.toHexString(e.getSource())
+                + " at " + e.getX() + "," + e.getY());
         return gestures.onTouchEvent(e) || super.onGenericMotionEvent(e);
-    }
-
-    // ------------------------------------------------------------ phone link
-    private void startServer() {
-        WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-        if (wifi != null) {
-            multicastLock = wifi.createMulticastLock("buildlens");
-            multicastLock.setReferenceCounted(false);
-            multicastLock.acquire();
-        }
-        new Thread(() -> {
-            try {
-                server = new ServerSocket(PORT);
-                main.post(this::advertise);
-                while (!server.isClosed()) {
-                    Socket s = server.accept();
-                    s.setTcpNoDelay(true);
-                    clients.add(s);
-                    main.post(() -> { show(); sendTo(s); });
-                    new Thread(() -> readLoop(s), "client").start();
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "server stopped: " + e);
-            }
-        }, "server").start();
-    }
-
-    private void advertise() {
-        try {
-            NsdServiceInfo info = new NsdServiceInfo();
-            info.setServiceName("BuildLens Glasses");
-            info.setServiceType("_buildlens-glass._tcp");
-            info.setPort(PORT);
-            nsd = (NsdManager) getSystemService(NSD_SERVICE);
-            nsdListener = new NsdManager.RegistrationListener() {
-                @Override public void onServiceRegistered(NsdServiceInfo i) { Log.i(TAG, "advertised " + i.getServiceName()); }
-                @Override public void onRegistrationFailed(NsdServiceInfo i, int err) { Log.w(TAG, "advertise failed " + err); }
-                @Override public void onServiceUnregistered(NsdServiceInfo i) {}
-                @Override public void onUnregistrationFailed(NsdServiceInfo i, int err) {}
-            };
-            nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, nsdListener);
-        } catch (Exception e) {
-            Log.w(TAG, "nsd: " + e);
-        }
-    }
-
-    private void readLoop(Socket s) {
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = r.readLine()) != null) {
-                JSONObject msg = new JSONObject(line);
-                if (msg.has("step")) {
-                    int n = msg.getInt("step");
-                    boolean done = msg.optBoolean("finished", false);
-                    main.post(() -> { step = n; finished = done; show(); });
-                }
-            }
-        } catch (Exception e) {
-            Log.i(TAG, "client gone: " + e);
-        } finally {
-            clients.remove(s);
-            try { s.close(); } catch (Exception ignored) {}
-            main.post(this::show);
-        }
-    }
-
-    private String message() {
-        return "{\"step\":" + step + ",\"finished\":" + finished + "}\n";
-    }
-
-    private void sendTo(Socket s) {
-        String m = message();
-        new Thread(() -> {
-            try {
-                OutputStream o = s.getOutputStream();
-                o.write(m.getBytes(StandardCharsets.UTF_8));
-                o.flush();
-            } catch (Exception e) {
-                clients.remove(s);
-            }
-        }).start();
-    }
-
-    private void broadcast() {
-        for (Socket s : clients) sendTo(s);
-    }
-
-    @Override
-    protected void onDestroy() {
-        try { if (nsd != null && nsdListener != null) nsd.unregisterService(nsdListener); } catch (Exception ignored) {}
-        try { if (server != null) server.close(); } catch (Exception ignored) {}
-        for (Socket s : clients) try { s.close(); } catch (Exception ignored) {}
-        if (multicastLock != null) multicastLock.release();
-        super.onDestroy();
     }
 }

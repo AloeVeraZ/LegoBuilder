@@ -89,9 +89,15 @@ final class AppModel {
             sync.onPeersChanged = { [weak self] names in self?.syncPeers = names }
             sync.start()
             glasses.onConnectionChange = { [weak self] connected in self?.glassesConnected = connected }
-            glasses.onRemoteStep = { [weak self] index, finished in
+            glasses.onRemoteStep = { [weak self] index, finished, replay in
                 guard let self else { return }
-                if finished { if !self.showingFinished { self.finish() } } else { self.go(to: index) }
+                if finished {
+                    if !self.showingFinished { self.finish() }
+                } else if replay, index == self.step {
+                    self.replay(broadcast: false)
+                } else {
+                    self.go(to: index)
+                }
             }
             glasses.start()
             voice.onCommand = { [weak self] command in self?.handle(command) }
@@ -125,11 +131,13 @@ final class AppModel {
     /// Opening the 3D viewer goes straight to the steps.
     func enterViewer() {
         if arPhase != .building { arPhase = .building }
+        glasses.instructionsOpen = true         // the glasses bring their screen up by themselves
         go(to: step, broadcast: false, force: true)
     }
 
     func startBuilding() {
         arPhase = .building
+        glasses.instructionsOpen = true
         go(to: step, force: true)
     }
 
@@ -199,14 +207,49 @@ final class AppModel {
         milestone = nil
     }
 
-    func replay() {
+    func replay(broadcast: Bool = true) {
+        clearMilestone()
+        finishTask?.cancel()
+        finishTask = nil
         showingFinished = false
         scene?.show(step: step, animated: true, force: true)
+        if broadcast { glasses.send(step: step, finished: false, replay: true) }
         speakCurrent()
     }
 
     func restart() {
         go(to: 0, force: true)
+    }
+
+    /// Dragging the step slider: show each step it passes at once, with no animation,
+    /// sound or network traffic, so the drag never lags behind the finger.
+    func scrub(to index: Int) {
+        guard let model, index >= 0, index < model.steps.count, index != step || showingFinished else { return }
+        clearMilestone()
+        finishTask?.cancel()
+        finishTask = nil
+        step = index
+        showingFinished = false
+        scene?.show(step: index, animated: false, force: true)
+    }
+
+    /// Letting go of the slider: now play the step properly and tell the other devices.
+    func endScrub() {
+        go(to: step, force: true)
+    }
+
+    /// Closing the instructions. A finished build starts from step 1 the next time;
+    /// anything else picks up where it was left. The glasses keep showing what they show.
+    func leaveInstructions() {
+        glasses.instructionsOpen = false
+        clearMilestone()
+        let wasFinishing = finishTask != nil
+        finishTask?.cancel()
+        finishTask = nil
+        if showingFinished || wasFinishing {
+            step = 0
+            showingFinished = false
+        }
     }
 
     /// The last pieces are pushed home first; "You built it" only appears once they are in.
@@ -219,6 +262,7 @@ final class AppModel {
             guard let self, !Task.isCancelled else { return }
             self.finishTask = nil
             self.showingFinished = true
+            self.scene?.spin()
             Haptics.success()
             if self.readAloud, let model = self.model { self.speaker.say("You built the \(model.name)!") }
         }

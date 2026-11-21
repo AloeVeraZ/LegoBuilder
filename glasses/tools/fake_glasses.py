@@ -8,8 +8,8 @@ iPhone: it should show the glasses as linked, and every step change prints here.
 
     python3 glasses/tools/fake_glasses.py
 
-Type `n` + Enter for next step, `b` + Enter for back (as if you swiped the touchpad),
-`q` + Enter to quit.
+Type a key + Enter, as if you clicked the button on the glasses:
+`n` next (one click), `r` replay this step (two clicks), `b` back (three clicks), `q` quit.
 """
 import json
 import socket
@@ -25,8 +25,8 @@ state = {"step": 0, "finished": False}
 lock = threading.Lock()
 
 
-def send_all():
-    line = (json.dumps(state) + "\n").encode()
+def send_all(replay=False):
+    line = (json.dumps(dict(state, replay=True) if replay else state) + "\n").encode()
     for c in list(clients):
         try:
             c.sendall(line)
@@ -52,7 +52,7 @@ def read_loop(conn, addr):
                 with lock:
                     state["step"] = int(msg["step"])
                     state["finished"] = bool(msg.get("finished", False))
-                show("from phone")
+                show("from phone, replay" if msg.get("replay") else "from phone")
     except OSError:
         pass
     finally:
@@ -80,7 +80,7 @@ def main():
         stdout=subprocess.DEVNULL,
     )
     threading.Thread(target=accept_loop, args=(server,), daemon=True).start()
-    print(f"Fake glasses advertising _buildlens-glass._tcp on port {PORT}. n = next, b = back, q = quit.", flush=True)
+    print(f"Fake glasses advertising _buildlens-glass._tcp on port {PORT}. n = next, r = replay, b = back, q = quit.", flush=True)
     try:
         for line in sys.stdin:
             key = line.strip().lower()
@@ -99,10 +99,10 @@ def main():
                         state["finished"] = False
                     elif state["step"] > 0:
                         state["step"] -= 1
-                else:
+                elif key != "r":
                     continue
-            show("touchpad")
-            send_all()
+            show("button, replay" if key == "r" else "button")
+            send_all(replay=key == "r")
         else:
             # stdin closed (run in the background): keep serving until killed.
             threading.Event().wait()
