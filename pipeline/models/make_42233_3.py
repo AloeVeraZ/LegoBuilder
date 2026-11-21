@@ -122,7 +122,7 @@ class Mesh:
         centre = np.mean(np.asarray(outer, float), axis=0)
         n = len(outer)
         front = lambda x, y: (x, y, z_front(y))
-        back = lambda x, y: (x, y, z_back)
+        back = lambda x, y: (x, y, z_back(y) if callable(z_back) else z_back)
         for i in range(n):
             j = (i + 1) % n
             o0, o1, i0, i1 = outer[i], outer[j], inner[i], inner[j]
@@ -147,8 +147,12 @@ class Mesh:
         ez = np.cross(ex, axis)
         end = start + axis * length
         self.prim("4-4cyli.dat", start, ex * r, axis * length, ez * r)
-        self.prim("4-4ring2.dat", start, ex * 3, axis, ez * 3)        # end faces (hole r 6 to r 9)
-        self.prim("4-4ring2.dat", end, ex * 3, -axis, -ez * 3)
+        # end faces, from the hole (r 6) out to the rim: a ring of r 6-8 or 6-9, then 8-10
+        inner, scale = ("4-4ring3.dat", 2) if r >= 10 else ("4-4ring2.dat", 3)
+        for at, way, side in ((start, axis, ez), (end, -axis, -ez)):
+            self.prim(inner, at, ex * scale, way, side * scale)
+            if r >= 10:
+                self.prim("4-4ring4.dat", at, ex * 2, way, side * 2)
         self.prim("axlehole.dat", start, ex, axis * length, ez)
 
 
@@ -180,12 +184,14 @@ def part_file(name, title, mesh):
 # yellow triple connector between them and their frames meet over it to make the cab.
 cab_half = Mesh()
 cab_half.lines.append("1 16 -20 0 0 0 0 1 1 0 0 0 1 0 6632.dat")
-# The frame's outer face is raked like a windscreen: a full stud deep above the beam,
-# half a stud at the roof. Its other face is flat, where the two halves meet.
+# The frame is a thin hoop standing on the beam and leaning in over the cab: its foot is
+# over the beam, its top bar half a stud further in, where it meets the other half's top
+# bar. From the side the two hoops make an "A", open between their legs, as on the real set.
+HOOP_LEAN = lambda y: -5 + (-8 - y) / 34 * 12
 cab_half.raked_ring(
-    rounded([(29, -8), (20, -44), (-20, -44), (-29, -8)], [1.5, 6, 6, 1.5]),
-    rounded([(23, -14), (16.5, -37.5), (-16.5, -37.5), (-23, -14)], [2, 4, 4, 2]),
-    lambda y: -5 + (-8 - y) / 36 * 10, 15)
+    rounded([(30, -8), (21, -42), (-21, -42), (-30, -8)], [1.5, 6, 6, 1.5]),
+    rounded([(24.5, -11), (16.5, -36.5), (-16.5, -36.5), (-24.5, -11)], [1.5, 3.5, 3.5, 1.5]),
+    HOOP_LEAN, lambda y: HOOP_LEAN(y) + 8)
 
 # 7450 / 7451, tipper-bed quarter panels. Local frame of a bed half: origin on the hinge
 # axis at the seam between its two panels, X out to the side, Z along the truck.
@@ -206,12 +212,12 @@ def bed_panel(sz):
     outward = lambda mid: (mid[0], 0, mid[2])
     inward = lambda mid: (-mid[0], 0, -mid[2])
     up, down = (lambda mid: -Y), (lambda mid: Y)
-    floor_out = tub_outline(36, 42, 13, Y_FLOOR_BOTTOM, sz)
-    wall_top = tub_outline(42, 52, 18, Y_LIP, sz)
-    lip_low = tub_outline(44.5, 54.5, 20.5, Y_LIP, sz)
-    lip_high = tub_outline(44.5, 54.5, 20.5, Y_RIM, sz)
-    rim_in = tub_outline(39, 49, 15, Y_RIM, sz)
-    floor_in = tub_outline(33, 39, 10, Y_FLOOR_TOP, sz)
+    floor_out = tub_outline(32, 42, 13, Y_FLOOR_BOTTOM, sz)
+    wall_top = tub_outline(37.5, 52, 16, Y_LIP, sz)
+    lip_low = tub_outline(40, 54.5, 18.5, Y_LIP, sz)
+    lip_high = tub_outline(40, 54.5, 18.5, Y_RIM, sz)
+    rim_in = tub_outline(34.5, 49, 13, Y_RIM, sz)
+    floor_in = tub_outline(29, 39, 10, Y_FLOOR_TOP, sz)
     m.loft(floor_out, wall_top, outward)
     m.loft(wall_top, lip_low, down)
     m.loft(lip_low, lip_high, outward)
@@ -220,9 +226,9 @@ def bed_panel(sz):
     m.face([(0, Y_FLOOR_TOP, 0)] + floor_in, -Y)
     m.face([(0, Y_FLOOR_BOTTOM, 0)] + floor_out, Y)
     # cut faces where the panel meets its neighbours (z = 0 and x = 0)
-    gx, gz = 33 + 6 * 35 / 38, 39 + 10 * 35 / 38
-    dims = {"floor_out": (36, 42), "floor_in": (33, 39), "wall": (42, 52), "inner": (gx, gz),
-            "lip": (44.5, 54.5), "rim": (39, 49)}
+    gx, gz = 29 + 5.5 * 35 / 38, 39 + 10 * 35 / 38
+    dims = {"floor_out": (32, 42), "floor_in": (29, 39), "wall": (37.5, 52), "inner": (gx, gz),
+            "lip": (40, 54.5), "rim": (34.5, 49)}
     for k, flat, hint in ((0, lambda a, y: (a, y, 0), -sz * Z), (1, lambda a, y: (0, y, sz * a), -X)):
         d = {name: v[k] for name, v in dims.items()}
         m.face([flat(0, Y_FLOOR_BOTTOM), flat(d["floor_out"], Y_FLOOR_BOTTOM),
@@ -231,13 +237,14 @@ def bed_panel(sz):
                 flat(d["inner"], Y_LIP), flat(d["floor_in"], Y_FLOOR_TOP)], hint)
         m.face([flat(d["inner"], Y_LIP), flat(d["lip"], Y_LIP), flat(d["lip"], Y_RIM), flat(d["rim"], Y_RIM)], hint)
     # gusset ribs on the outside of the side wall
-    # They stand out to a flat side, as on the moulded part, with the hinge boss between them.
-    for zc in (3, 12, 21):
-        m.prism_z([(36, -9.5), (44.5, -9.5), (44.5, Y_LIP), (42, Y_LIP)], sz * zc - 1.6, sz * zc + 1.6)
-    # hinge boss (across the truck) and joining boss (along the truck), each on a short neck.
-    # The hinge boss runs out to the side of the bed, where its axle hole shows.
-    m.boss((10, 0, sz * 30), X, 34.5)
-    m.box(10, 44.5, -10.5, -3, sz * 30 - 7, sz * 30 + 7)
+    # The side is corrugated: broad flat ribs standing out to a flat face, grooves between.
+    for zc in (5, 15, 25):
+        m.prism_z([(32, -9.5), (40, -9.5), (40, Y_LIP), (37.5, Y_LIP)], sz * zc - 3.2, sz * zc + 3.2)
+    # hinge barrel (across the truck) and joining boss (along the truck), each on a short
+    # neck. The barrel is a full stud across and runs from the L-beam out to the side of
+    # the bed, where the end of the hinge axle shows in its cross hole.
+    m.boss((10, 0, sz * 30), X, 30, r=10)
+    m.box(10, 40, -10.5, -3, sz * 30 - 7, sz * 30 + 7)
     m.boss((20, 0, 0), sz * Z, 20)
     m.box(14, 26, -10.5, -3, 0, sz * 20)
     return m

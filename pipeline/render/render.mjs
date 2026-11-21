@@ -56,7 +56,8 @@ if (want('--hud')) {
   // arrow at the bottom of its bounce (-w), part-way in (-a) and seated (-b).
   // Where the next step is looked at from another side, four frames (-r1..-r4) of the
   // finished step turning round to it.
-  const variants = [['', { lift: 1 }], ['-w', { lift: 1, pressed: true }], ['-a', { lift: 0.45 }], ['-b', { lift: 0 }]];
+  // -c, -a, -d are the piece on its way in (three quarters, half, a quarter of the way out).
+  const variants = [['', { lift: 1 }], ['-w', { lift: 1, pressed: true }], ['-c', { lift: 0.74 }], ['-a', { lift: 0.45 }], ['-d', { lift: 0.18 }], ['-b', { lift: 0 }]];
   const views = await page.evaluate(() => BL.stepViews());
   const shot = async (name, s, opts) => save(path.join(buildDir, 'hud'), name,
     await page.evaluate(([s, opts]) => BL.step(s, { w: 640, h: 480, mode: 'hud', ...opts }), [s, opts]));

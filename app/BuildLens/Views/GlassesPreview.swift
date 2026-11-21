@@ -21,26 +21,36 @@ struct GlassesPreview: View {
         let finished: Bool
         let view: Int
         let milestone: Bool
+        let seating: Bool
     }
 
-    /// The same timing as the glasses app (glasses/.../MainActivity.java).
+    /// The step whose piece the display already shows in place.
+    @State private var seatedStep = -1
+
+    /// The waiting piece goes into its place over four pictures: the same half second as
+    /// the phone's own animation (and the glasses app, glasses/.../MainActivity.java).
+    private func slotIn(_ step: Int, view: Int) async {
+        guard seatedStep != step else { frame = (step, view, "-b"); return }
+        seatedStep = step
+        for variant in ["-c", "-a", "-d", "-b"] {
+            frame = (step, view, variant)
+            try? await Task.sleep(nanoseconds: 140_000_000)
+            guard !Task.isCancelled else { return }
+        }
+    }
+
     private func play() async {
         let step = app.step
         let view = app.glassesView
         let pause = { (seconds: Double) in try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
-        if app.showingFinished || app.milestone != nil {
-            // The last piece slots in and the finished picture stays up.
+        if app.showingFinished || app.isSeating {
+            // The piece clicks in as it does on the phone; the words follow once it is in.
             let from = settledStep == step ? settledView : view
-            frame = (step, from, "-a")
-            await pause(0.22)
-            guard !Task.isCancelled else { return }
-            frame = (step, from, "-b")
-            guard app.showingFinished else { return }
+            await slotIn(step, view: from)
+            guard !Task.isCancelled, app.showingFinished else { return }
             settledStep = -1
             // The finish, as on the glasses: the truck spins twice, fast then slowing to a
             // stop where it began, and confetti goes off.
-            await pause(0.32)
-            guard !Task.isCancelled else { return }
             let count = BuildModel.glassesFinishFrames
             guard app.model?.glassesFinishURL(frame: count) != nil else { return }
             let total = count * 2
@@ -59,11 +69,10 @@ struct GlassesPreview: View {
         confetti = nil
         if settledStep >= 0, step == settledStep + 1 {
             let before = settledStep
-            frame = (before, settledView, "-a")
-            await pause(0.11)
+            let wasSeated = seatedStep == before
+            await slotIn(before, view: settledView)
             guard !Task.isCancelled else { return }
-            frame = (before, settledView, "-b")
-            await pause(0.32)
+            if !wasSeated { await pause(0.18) }
             guard !Task.isCancelled else { return }
             // Where the new step is seen from another side, the finished step turns round to it.
             if let model = app.model, settledView == model.steps[before].view, view != settledView {
@@ -76,6 +85,7 @@ struct GlassesPreview: View {
         }
         settledStep = step
         settledView = view
+        seatedStep = -1
         var pressed = false
         while !Task.isCancelled {
             frame = (step, view, pressed ? "-w" : "")
@@ -155,7 +165,7 @@ struct GlassesPreview: View {
         // Restarts whenever the step (or finished state) changes, and plays what the real
         // glasses play: the last piece slots in, then the new one waits with a bouncing arrow.
         .task(id: Playing(step: app.step, finished: app.showingFinished, view: app.glassesView,
-                          milestone: app.milestone != nil)) { await play() }
+                          milestone: app.milestone != nil, seating: app.isSeating)) { await play() }
         .clipShape(Theme.shape(Theme.Radius.tile))
         .overlay {
             Theme.shape(Theme.Radius.tile)

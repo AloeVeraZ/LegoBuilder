@@ -250,6 +250,10 @@ final class AppModel {
         go(to: step + 1)
     }
 
+    /// The last piece of a part of the build (or of the whole truck) is clicking in, or the
+    /// "well done" for it is up: the step itself is over. The glasses preview follows this.
+    var isSeating: Bool { milestoneTask != nil || finishTask != nil }
+
     private func clearMilestone() {
         milestoneTask?.cancel()
         milestoneTask = nil

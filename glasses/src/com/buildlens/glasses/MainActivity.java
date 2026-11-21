@@ -56,7 +56,10 @@ public class MainActivity extends Activity implements LinkService.Listener {
 
     /** Clicks closer together than this count as one double or triple click. */
     private static final int CLICK_WINDOW_MS = 400;
-    private static final int BOUNCE_MS = 450, HALF_MS = 110, SEATED_MS = 320, BLINK_MS = 120;
+    private static final int BOUNCE_MS = 450, SEATED_MS = 320, BLINK_MS = 120;
+    /** A piece goes in over four pictures this far apart: the same half second as on the phone. */
+    private static final int SLOT_MS = 140;
+    private static final String[] SLOT = {"-c", "-a", "-d", "-b"};
     /** The arrow stops bouncing after this long without input; any input starts it again. */
     private static final int BOUNCE_FOR_MS = 20_000;
     /** With nothing happening for this long the display is allowed to sleep, to save the battery. */
@@ -74,6 +77,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
     private int animation = 0;              // bumped on every change so stale timers do nothing
     private Bitmap waitFrame, pressedFrame; // the two pictures of the current step's bounce
     private int framesFor = -1;             // which step those two pictures belong to
+    private int seatedStep = -1;            // the step whose piece is shown already in place
     private boolean settling;               // a step change is still playing; don't interrupt it
     private long bounceUntil;
     private boolean bouncing;
@@ -123,6 +127,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
         bouncing = false;
         settling = false;
         shownStep = -1;                     // coming back draws the step afresh
+        seatedStep = -1;
         main.removeCallbacks(resolveClicks);
         main.removeCallbacks(allowSleep);
         clicks = 0;
@@ -248,26 +253,37 @@ public class MainActivity extends Activity implements LinkService.Listener {
         confetti.stop();
         try {
             if (finished) {
-                header.setText("DONE \u2713");
-                sub.setText(setName.toUpperCase());
-                parts.setText("");
-                playFinish(step, step == shownStep ? shownView : view);
+                // The piece clicks in first, at its own pace; only then "done" and the spin.
+                final int run = ++animation;
+                final int seenFrom = step == shownStep ? shownView : view;
+                bouncing = false;
+                settling = false;
+                int seated = slotIn(step, seenFrom, run);
+                main.postDelayed(() -> {
+                    if (run != animation) return;
+                    header.setText("DONE \u2713");
+                    sub.setText(setName.toUpperCase());
+                    parts.setText("");
+                    playSpin(step, seenFrom, run);
+                }, seated);
             } else if (milestone) {
-                showGoodJob(step);
-                playSeated(step, step == shownStep ? shownView : view);
+                final int run = ++animation;
+                bouncing = false;
+                settling = false;
+                int seated = slotIn(step, step == shownStep ? shownView : view, run);
+                main.postDelayed(() -> { if (run == animation) showGoodJob(step); }, seated);
             } else {
                 // Leaving the last step of a part of the build by a click on the glasses:
-                // the "good job" comes first, then the new step.
+                // the piece clicks in, then the "good job", then the new step.
                 boolean forward = shownStep >= 0 && step == shownStep + 1 && !shownFinished;
                 if (forward && !shownMilestone && steps.getJSONObject(shownStep).optJSONArray("done") != null) {
                     final int run = ++animation;
-                    final int from = shownStep, fromView = shownView;
-                    showGoodJob(from);
+                    final int from = shownStep;
                     settling = true;
                     bouncing = false;
-                    frame.setImageBitmap(load(frameOf(from, fromView, "-a")));
-                    main.postDelayed(() -> { if (run == animation) setFrame(from, fromView, "-b"); }, HALF_MS);
-                    main.postDelayed(() -> { if (run == animation) { shownMilestone = false; shownStep = -1; show(); } }, GOOD_JOB_MS);
+                    int seated = slotIn(from, shownView, run);
+                    main.postDelayed(() -> { if (run == animation) showGoodJob(from); }, seated);
+                    main.postDelayed(() -> { if (run == animation) { shownMilestone = false; shownStep = -1; show(); } }, seated + GOOD_JOB_MS);
                     shownMilestone = true;
                     return;
                 }
@@ -281,7 +297,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
                 if (lines.length() > 4) b.append("+").append(lines.length() - 4).append(" MORE\n");
                 parts.setText(b.toString().trim());
                 // A step forward slots the last piece in first, unless the "good job" already did.
-                playStep(step, view, forward && !shownMilestone);
+                playStep(step, view, forward);
             }
         } catch (Exception e) {
             Log.e(TAG, "show", e);
@@ -293,10 +309,11 @@ public class MainActivity extends Activity implements LinkService.Listener {
     }
 
     /** The same words as the phone's card, in the glasses' own type. */
-    private void showGoodJob(int step) throws Exception {
-        JSONArray done = steps.getJSONObject(step).optJSONArray("done");
-        header.setText(done == null ? "GOOD JOB!" : done.getString(0));
-        sub.setText(done == null ? "" : done.getString(1));
+    private void showGoodJob(int step) {
+        JSONObject info = steps.optJSONObject(step);
+        JSONArray done = info == null ? null : info.optJSONArray("done");
+        header.setText(done == null ? "GOOD JOB!" : done.optString(0));
+        sub.setText(done == null ? "" : done.optString(1));
         parts.setText("");
     }
 
@@ -317,9 +334,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
         settling = true;
         if (slotInPrevious) {
             final int before = step - 1, beforeView = shownView;
-            frame.setImageBitmap(load(frameOf(before, beforeView, "-a")));
-            main.postDelayed(() -> { if (run == animation) setFrame(before, beforeView, "-b"); }, HALF_MS);
-            delay = HALF_MS + SEATED_MS;
+            delay = slotIn(before, beforeView, run);
+            if (delay > 0) delay += SEATED_MS - SLOT_MS;
             // Turning frames exist for the step's own side going to the next step's own side.
             JSONObject b = steps.getJSONObject(before);
             int turns = b.optInt("turns", 0);
@@ -334,6 +350,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
         final String asset = frameOf(step, view, ""), pressedAsset = frameOf(step, view, "-w");
         main.postDelayed(() -> {
             if (run != animation) return;
+            seatedStep = -1;
             waitFrame = load(asset);
             pressedFrame = load(pressedAsset);
             framesFor = step * 4 + view;
@@ -341,28 +358,30 @@ public class MainActivity extends Activity implements LinkService.Listener {
         }, delay);
     }
 
-    /** The piece slots in and the seated picture stays up (finished, or during "good job"). */
-    private void playSeated(final int step, final int view) throws Exception {
-        final int run = ++animation;
-        bouncing = false;
-        settling = false;
-        frame.setImageBitmap(load(frameOf(step, view, "-a")));
-        main.postDelayed(() -> { if (run == animation) setFrame(step, view, "-b"); }, HALF_MS * 2);
+    /**
+     * The waiting piece goes into its place, picture by picture, and stays there. Returns
+     * how long that takes (nothing, if this step's piece is already shown in place).
+     */
+    private int slotIn(final int step, final int view, final int run) {
+        if (seatedStep == step) { setFrame(step, view, "-b"); return 0; }
+        seatedStep = step;
+        for (int i = 0; i < SLOT.length; i++) {
+            final String state = SLOT[i];
+            main.postDelayed(() -> { if (run == animation) setFrame(step, view, state); }, (long) i * SLOT_MS);
+        }
+        return SLOT.length * SLOT_MS;
     }
 
     /**
-     * The finish: the last piece slots in, the truck spins twice (fast, slowing to a stop
+     * The finish, once the last piece is in: the truck spins twice (fast, slowing to a stop
      * where it began) and confetti goes off. Same timing as the phone's glasses preview.
      */
-    private void playFinish(final int step, final int view) throws Exception {
-        playSeated(step, view);
-        final int run = animation;
+    private void playSpin(final int step, final int view, final int run) {
         if (finishFrames <= 0) return;
         final int total = finishFrames * 2;
-        final int begin = HALF_MS * 2 + SEATED_MS;
         for (int k = 1; k <= total; k++) {
             final int n = (k - 1) % finishFrames + 1;
-            long at = begin + (long) (2800 * (1 - Math.pow(1 - k / (double) total, 0.25)));
+            long at = (long) (2800 * (1 - Math.pow(1 - k / (double) total, 0.25)));
             main.postDelayed(() -> {
                 if (run == animation) frame.setImageBitmap(load(String.format(java.util.Locale.US, "hud/hud-finish-%02d.png", n)));
             }, at);
@@ -371,7 +390,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
             if (run != animation) return;
             setFrame(step, view, "-b");
             confetti.burst();
-        }, begin + 2850);
+        }, 2850);
     }
 
     /** Confetti in the display's one colour: a burst up from the bottom that falls away. */

@@ -689,6 +689,7 @@ def main():
     ap.add_argument("--set-name", default="")
     ap.add_argument("--theme", default="")
     ap.add_argument("--pieces", type=int, help="piece count to show for the set (what the box says), if it differs from the model")
+    ap.add_argument("--seam", type=float, default=0.012, help="how much smaller each part is drawn, to leave a hairline between pieces (0 = none)")
     ap.add_argument("--names", help="JSON file mapping part numbers to display names (e.g. the set's official parts list)")
     args = ap.parse_args()
 
@@ -751,6 +752,14 @@ def main():
                 t.append(box[[q[0], q[1], q[2]]])
                 t.append(box[[q[0], q[2], q[3]]])
             groups = build_part_mesh(np.array(t), np.full(len(t), 16))
+        # Real bricks never meet perfectly: there is a hairline between any two pieces.
+        # Each part is drawn a touch small about its own middle, which leaves that line.
+        if args.seam > 0 and groups:
+            plo = np.min([g.positions.min(axis=0) for g in groups], axis=0)
+            phi = np.max([g.positions.max(axis=0) for g in groups], axis=0)
+            mid = (plo + phi) / 2
+            for g in groups:
+                g.positions = mid + (g.positions - mid) * (1 - args.seam)
         gj = []
         lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
         for g in groups:
