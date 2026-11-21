@@ -25,6 +25,9 @@ enum GlassesInstaller {
     static func ensure(adb: String, serial: String) {
         lock.lock()
         defer { lock.unlock() }
+        // The glasses do not let BuildLens start by itself after they are switched on, so
+        // the Mac opens it whenever it finds them without it running.
+        defer { openIfNotRunning(adb: adb, serial: serial) }
         guard !checked.contains(serial), let bundled else { return }
         checked.insert(serial)
         let installed = installedVersion(adb: adb, serial: serial)
@@ -41,8 +44,14 @@ enum GlassesInstaller {
             checked.remove(serial)       // try again on the next plug-in check
             return
         }
+        log.info("glasses \(serial, privacy: .public): BuildLens \(bundled.version) installed")
+    }
+
+    private static func openIfNotRunning(adb: String, serial: String) {
+        guard run(adb, ["-s", serial, "shell", "pidof", package]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              installedVersion(adb: adb, serial: serial) > 0 else { return }
         _ = run(adb, ["-s", serial, "shell", "am", "start", "-n", "\(package)/.MainActivity"])
-        log.info("glasses \(serial, privacy: .public): BuildLens \(bundled.version) installed and opened")
+        log.info("glasses \(serial, privacy: .public): BuildLens was not running, opened it")
     }
 
     /// The glasses app's version on the glasses; 0 if it is not there.
