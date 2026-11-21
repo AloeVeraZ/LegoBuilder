@@ -159,8 +159,12 @@ struct BuildScreen: View {
 
             if !scanningForSet {
             Menu {
-                Toggle("Fade pieces already built", isOn: Binding(get: { app.focusMode }, set: { app.focusMode = $0 }))
-                Toggle("Read steps aloud", isOn: Binding(get: { app.readAloud }, set: { app.readAloud = $0 }))
+                // Switches: ticking one leaves the menu open, so both can be set in one go.
+                Group {
+                    Toggle("Fade pieces already built", isOn: Binding(get: { app.focusMode }, set: { app.focusMode = $0 }))
+                    Toggle("Read steps aloud", isOn: Binding(get: { app.readAloud }, set: { app.readAloud = $0 }))
+                }
+                .menuActionDismissBehavior(.disabled)
                 Button {
                     Task { await app.voice.toggle() }
                 } label: {
