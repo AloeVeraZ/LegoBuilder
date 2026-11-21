@@ -45,6 +45,7 @@ final class AppModel {
     /// The phone is at the start (the box scan): BuildLens comes up on the glasses if it was
     /// closed, directly (Wi-Fi or Bluetooth) and through the Mac (cable).
     func wakeGlasses() {
+        glassesBuilding = false
         glasses.sendWake()
         sync.sendWake()
     }
@@ -314,7 +315,7 @@ final class AppModel {
             sync.onPlaced = { [weak self] in self?.glassesPlaced() }
             #if os(macOS)
             sync.onScanSkipped = { [weak self] in self?.glassesBuilding = true; self?.glasses.sendScanSkipped() }
-            sync.onWake = { [weak self] in self?.glasses.sendWake() }
+            sync.onWake = { [weak self] in self?.glassesBuilding = false; self?.glasses.sendWake() }
             sync.onEnd = { [weak self] in self?.glassesBuilding = false; self?.glasses.sendEnd() }
             #endif
             glasses.onPlaced = { [weak self] in self?.glassesPlaced() }

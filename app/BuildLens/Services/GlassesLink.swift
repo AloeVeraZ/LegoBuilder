@@ -85,9 +85,10 @@ final class GlassesLink {
         write("{\"noscan\":true}\n")
     }
 
-    /// Brings BuildLens up on the glasses if it is not on their screen.
+    /// The phone is at its start (the box scan): BuildLens comes up on the glasses if it is not
+    /// on their screen, and goes back to its own box scan, so both start together.
     func sendWake() {
-        write("{\"wake\":true}\n")
+        write("{\"wake\":true,\"start\":true}\n")
     }
 
     /// The build is over: the glasses go back to their start page.

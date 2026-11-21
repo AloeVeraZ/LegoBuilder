@@ -248,6 +248,23 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         showScreen(HOME);
     }
 
+    /** Set while a scan is stopped to go back to the box (its callback then goes there). */
+    private boolean backToBox;
+
+    /** The phone is at its box scan: so are the glasses, then the phone's code, then the build. */
+    @Override
+    public void onPhoneAtStart() {
+        if (screen == BOX) return;
+        Log.i(TAG, "start: the phone is at its box scan");
+        closeMenu();
+        hush();
+        animation++;
+        confetti.stop();
+        scanSkipped = false;
+        if (lineup.active()) { backToBox = true; lineup.cancel(); return; }
+        startBox();
+    }
+
     @Override
     public void onScanSkipped() {
         Log.i(TAG, "scan: skipped on the phone");
@@ -268,6 +285,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         lineup.begin(linedUp -> {
             LinkService.askForMarker(false);
             // No tap for a while: keep waiting on the scan (no dead end on a start screen).
+            if (backToBox) { backToBox = false; startBox(); return; }
             if (!linedUp && !scanSkipped) { startLineup(); return; }
             showScreen(BUILD);
             shownStep = -1;
@@ -474,6 +492,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         if (LinkService.boxWaiting) { LinkService.boxWaiting = false; onBoxScanned(); }
         if (LinkService.skipWaiting) { LinkService.skipWaiting = false; onScanSkipped(); }
         if (LinkService.endWaiting) { LinkService.endWaiting = false; onEnd(); }
+        if (LinkService.startWaiting) { LinkService.startWaiting = false; onPhoneAtStart(); }
         quietClicks(true);
         head.start();
         show();
