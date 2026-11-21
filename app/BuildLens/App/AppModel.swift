@@ -23,6 +23,7 @@ final class AppModel {
     var needsRescan = false
     private(set) var foundByScan = false
     private(set) var syncPeers: [String] = []
+    private(set) var glassesConnected = false
 
     var focusMode = false {
         didSet {
@@ -37,11 +38,13 @@ final class AppModel {
     let voice: VoiceCommands
     let speaker: StepSpeaker
     let sync: PeerSync
+    let glasses: GlassesLink
 
     init() {
         voice = VoiceCommands()
         speaker = StepSpeaker()
         sync = PeerSync()
+        glasses = GlassesLink()
     }
 
     var stepCount: Int { model?.steps.count ?? 0 }
@@ -67,6 +70,12 @@ final class AppModel {
             sync.onRemoteStep = { [weak self] index in self?.go(to: index, broadcast: false) }
             sync.onPeersChanged = { [weak self] names in self?.syncPeers = names }
             sync.start()
+            glasses.onConnectionChange = { [weak self] connected in self?.glassesConnected = connected }
+            glasses.onRemoteStep = { [weak self] index, finished in
+                guard let self else { return }
+                if finished { if !self.showingFinished { self.finish() } } else { self.go(to: index) }
+            }
+            glasses.start()
             voice.onCommand = { [weak self] command in self?.handle(command) }
         } catch {
             loadError = error.localizedDescription
@@ -127,6 +136,7 @@ final class AppModel {
     func finish() {
         showingFinished = true
         scene?.showFinished(animated: true)
+        glasses.send(step: step, finished: true)
         Haptics.success()
         if readAloud, let model { speaker.say("You built the \(model.name)!") }
     }
@@ -140,6 +150,7 @@ final class AppModel {
         scene?.show(step: index, animated: changed || force, force: changed || force)
         if changed { Haptics.tap() }
         if broadcast { sync.send(step: index) }
+        glasses.send(step: index, finished: false)
         if changed || force { speakCurrent() }
     }
 

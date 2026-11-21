@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Builds dist/BuildLensGlasses.apk without Gradle (plain javac + d8 + aapt2 + apksigner).
+# Needs a JDK and the Android SDK (platforms;android-34, build-tools;35.0.0): set ANDROID_HOME.
+set -euo pipefail
+cd "$(dirname "$0")"
+SDK="${ANDROID_HOME:?set ANDROID_HOME to your Android SDK}"
+BT="$SDK/build-tools/35.0.0"
+JAR="$SDK/platforms/android-34/android.jar"
+rm -rf build && mkdir -p build/classes build/dex dist
+python3 make_assets.py
+"$BT/aapt2" compile --dir res -o build/res.zip
+"$BT/aapt2" link -I "$JAR" --manifest AndroidManifest.xml -A assets -o build/unsigned.apk build/res.zip
+javac --release 8 -classpath "$JAR" -d build/classes $(find src -name '*.java') 2>&1 | grep -v "bootstrap classpath\|^warning\|^1 warning\|obsolete\|suppress" || true
+(cd build/classes && jar cf ../classes.jar .)
+"$BT/d8" --min-api 24 --lib "$JAR" --output build/dex build/classes.jar
+cp build/unsigned.apk build/with-dex.apk
+(cd build/dex && zip -q ../with-dex.apk classes.dex)
+"$BT/zipalign" -f 4 build/with-dex.apk build/aligned.apk
+[ -f debug.keystore ] || keytool -genkeypair -keystore debug.keystore -storepass android -keypass android -alias debug \
+    -dname "CN=BuildLens Debug" -keyalg RSA -keysize 2048 -validity 10000 >/dev/null 2>&1
+"$BT/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out dist/BuildLensGlasses.apk build/aligned.apk
+echo "Built $(pwd)/dist/BuildLensGlasses.apk"

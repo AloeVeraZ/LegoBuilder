@@ -165,6 +165,12 @@ struct StepHeader: View {
                         .foregroundStyle(.red)
                         .lineLimit(1)
                 }
+                if app.glassesConnected {
+                    Image(systemName: "eyeglasses")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .help("Glasses linked")
+                }
                 if !app.syncPeers.isEmpty {
                     Image(systemName: "link")
                         .font(.caption)

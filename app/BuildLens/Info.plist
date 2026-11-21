@@ -6,6 +6,7 @@
 	<array>
 		<string>_buildlens-sync._tcp</string>
 		<string>_buildlens-sync._udp</string>
+		<string>_buildlens-glass._tcp</string>
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>

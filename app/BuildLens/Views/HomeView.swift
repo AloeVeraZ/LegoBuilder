@@ -37,6 +37,11 @@ struct HomeView: View {
             VStack(spacing: 22) {
                 hero
                 actions
+                if app.glassesConnected {
+                    Label("Glasses linked", systemImage: "eyeglasses")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                }
                 if !app.syncPeers.isEmpty {
                     Label("Synced with \(app.syncPeers.joined(separator: ", "))", systemImage: "link")
                         .font(.footnote)
