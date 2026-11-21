@@ -196,8 +196,9 @@ final class BuildModel {
 
     /// Xcode may copy the BuildData folder flat or keep sub-folders, so look in both.
     static func resource(_ name: String, _ ext: String, in bundle: Bundle) -> URL? {
-        let folders: [String?] = [nil, "BuildData", "thumbs", "hud", "BuildData/thumbs", "BuildData/hud",
-                                  "Resources/BuildData", "Resources/BuildData/thumbs", "Resources/BuildData/hud"]
+        let folders: [String?] = [nil, "BuildData", "thumbs", "hud", "voice", "BuildData/thumbs", "BuildData/hud",
+                                  "BuildData/voice", "Resources/BuildData", "Resources/BuildData/thumbs",
+                                  "Resources/BuildData/hud", "Resources/BuildData/voice"]
         for dir in folders {
             if let url = bundle.url(forResource: name, withExtension: ext, subdirectory: dir) { return url }
         }
@@ -309,6 +310,18 @@ final class BuildModel {
     }
 
     /// What the app says when "read steps aloud" is on.
+    /// What is said out loud, by key ("step-003", "done-006", "finish", "found"): the words
+    /// (written by pipeline/make_voice.py the way a person would say them) and, where
+    /// there is one, the recording of them.
+    private(set) lazy var spokenLines: [String: String] = {
+        guard let url = Self.resource("voice", "json", in: bundle), let data = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+    }()
+
+    func recording(_ key: String) -> URL? {
+        Self.resource("voice-\(key)", "m4a", in: bundle)
+    }
+
     /// The step as someone would say it: "Step 3 of 23. Add one tan axle pin."
     func spokenSummary(for index: Int) -> String {
         guard index >= 0, index < steps.count else { return "" }

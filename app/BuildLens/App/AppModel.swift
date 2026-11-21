@@ -175,7 +175,7 @@ final class AppModel {
         scene?.showFinished(animated: false)
         Haptics.success()
         if readAloud, let model {
-            speaker.say("Found \(model.name). \(model.pieceCount) pieces in \(model.steps.count) steps.")
+            speak("found", otherwise: "Found \(model.name). \(model.pieceCount) pieces in \(model.steps.count) steps.")
         }
     }
 
@@ -238,7 +238,7 @@ final class AppModel {
             guard let self, !Task.isCancelled else { return }
             self.milestone = message
             Haptics.success()
-            if self.readAloud { self.speaker.say("\(message.title) \(message.detail)") }
+            if self.readAloud { self.speak(String(format: "done-%03d", self.step + 1), otherwise: "\(message.title) \(message.detail)") }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard !Task.isCancelled else { return }
             self.milestone = nil
@@ -297,6 +297,7 @@ final class AppModel {
     /// Closing the instructions. A finished build starts from step 1 the next time;
     /// anything else picks up where it was left. The glasses keep showing what they show.
     func leaveInstructions() {
+        speaker.stop()
         glasses.instructionsOpen = false
         clearMilestone()
         let wasFinishing = finishTask != nil
@@ -321,7 +322,7 @@ final class AppModel {
             self.showingFinished = true
             self.scene?.spin()
             Haptics.success()
-            if self.readAloud, let model = self.model { self.speaker.say("You built the \(model.name)!") }
+            if self.readAloud, let model = self.model { self.speak("finish", otherwise: "You built the \(model.name)!") }
         }
     }
 
@@ -351,7 +352,19 @@ final class AppModel {
 
     private func speakCurrent() {
         guard readAloud, let model, !showingFinished else { return }
-        speaker.say(model.spokenSummary(for: step))
+        speak(String(format: "step-%03d", step + 1), otherwise: model.spokenSummary(for: step))
+    }
+
+    /// Says a line: its recording if there is one, else its words in the phone's own voice.
+    private func speak(_ key: String, otherwise: String) {
+        guard let model else { return speaker.say(otherwise) }
+        speaker.say(model.spokenLines[key] ?? otherwise, recording: model.recording(key))
+    }
+
+    /// Stops whatever is being said, at once (leaving the instructions, or changing view).
+    /// The next step, or Replay, starts it again.
+    func hush() {
+        speaker.stop()
     }
 
     private func handle(_ command: VoiceCommands.Command) {
