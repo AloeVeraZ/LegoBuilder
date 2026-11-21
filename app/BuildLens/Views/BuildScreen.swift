@@ -156,7 +156,7 @@ struct BuildScreen: View {
 
             if !scanningForSet {
             Menu {
-                Toggle("Focus on new pieces", isOn: Binding(get: { app.focusMode }, set: { app.focusMode = $0 }))
+                Toggle("Fade pieces already built", isOn: Binding(get: { app.focusMode }, set: { app.focusMode = $0 }))
                 Toggle("Read steps aloud", isOn: Binding(get: { app.readAloud }, set: { app.readAloud = $0 }))
                 Button {
                     Task { await app.voice.toggle() }
