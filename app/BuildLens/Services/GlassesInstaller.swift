@@ -30,6 +30,8 @@ enum GlassesInstaller {
         defer { openIfNotRunning(adb: adb, serial: serial) }
         guard !checked.contains(serial), let bundled else { return }
         checked.insert(serial)
+        // Once the app is on the glasses: its start-up service on, so it runs without the cable.
+        defer { allowStartWithoutCable(adb: adb, serial: serial) }
         let installed = installedVersion(adb: adb, serial: serial)
         guard installed < bundled.version else { return }
         log.info("glasses \(serial, privacy: .public): version \(installed) -> \(bundled.version), installing")
@@ -45,6 +47,23 @@ enum GlassesInstaller {
             return
         }
         log.info("glasses \(serial, privacy: .public): BuildLens \(bundled.version) installed")
+    }
+
+    /// The glasses only let a turned-on accessibility service start by itself after power-on
+    /// (MicroLumin's glasses app template does the same): BuildLens's OpenService, which only
+    /// starts its phone link. Turned on once, alongside any already on; kept awake in Doze.
+    private static func allowStartWithoutCable(adb: String, serial: String) {
+        guard installedVersion(adb: adb, serial: serial) > 0 else { return }
+        let service = "\(package)/\(package).OpenService"
+        let current = run(adb, ["-s", serial, "shell", "settings", "get", "secure", "enabled_accessibility_services"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let list = current.split(separator: ":").map(String.init).filter { !$0.isEmpty && $0 != "null" }
+        if !list.contains(service) {
+            _ = run(adb, ["-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", (list + [service]).joined(separator: ":")])
+            _ = run(adb, ["-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1"])
+            log.info("glasses \(serial, privacy: .public): start-up service turned on")
+        }
+        _ = run(adb, ["-s", serial, "shell", "dumpsys", "deviceidle", "whitelist", "+\(package)"])
     }
 
     private static func openIfNotRunning(adb: String, serial: String) {

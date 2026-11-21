@@ -36,6 +36,14 @@ if ! $lineup_only; then
     say "Installing BuildLens..."
     # -g allows the camera straight away, so nothing has to be tapped on the glasses.
     a install -r -g "$APK" | tail -1
+    # Starts BuildLens at every power-on without the cable: the glasses only let a turned-on
+    # accessibility service start by itself (MicroLumin's glasses app template does the same).
+    svc="$APP/$APP.OpenService"
+    cur=$(a shell settings get secure enabled_accessibility_services | tr -d '\r')
+    case ":$cur:" in *":$svc:"*) ;; ":null:"|"::") a shell settings put secure enabled_accessibility_services "$svc" ;;
+        *) a shell settings put secure enabled_accessibility_services "$cur:$svc" ;; esac
+    a shell settings put secure accessibility_enabled 1
+    a shell dumpsys deviceidle whitelist "+$APP" >/dev/null
     a shell am start -n $APP/.MainActivity >/dev/null
     echo "Open on the glasses."
 fi

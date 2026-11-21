@@ -1,2 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources><string name="app_name">BuildLens</string></resources>
+<resources>
+    <string name="app_name">BuildLens</string>
+    <string name="open_service_description">Starts BuildLens\'s phone link when the glasses are switched on. It reads nothing on screen.</string>
+</resources>
