@@ -15,8 +15,8 @@ the step order of the official printed instructions (23 steps):
   23     six wheels (rim + tyre)
 
 Three 2026 parts are not in the LDraw library yet (7450, 7451 tipper-bed panels and the
-7944 cab half): they are modelled here from the instruction drawings, and placed where
-their holes line up with the official parts they connect to. LDraw units: 1 stud = 20 LDU, -Y up, truck front at -Z.
+7944 cab half): they are modelled here from the instruction drawings. Every part is
+placed where its holes line up with what it connects to, pins and axles fully seated. LDraw units: 1 stud = 20 LDU, -Y up, truck front at -Z.
 """
 import os
 import numpy as np
@@ -256,42 +256,62 @@ def model(name, steps):
     return out + ["0 NOFILE", ""]
 
 # ------------------------------------------------------------- layout
-AXLE_Y = -19            # wheel centre height (tyre radius 19)
-R_BLOCK_Y = AXLE_Y - 20 # split blocks: round pin hole on top, lower axle row at wheel height
-RB1_Z, RB2_Z = 40, 0    # rear split blocks (axle holes 20 behind -> wheels at 60 and 20)
-REAR_WHEELS = [RB1_Z + 20, RB2_Z + 20]
-FRONT_AXLE_Z = -50
+# Every position below follows from how the parts lock together, with pins and axles
+# fully seated (pipeline/models/check_42233_3.py verifies each one):
+#
+#   * A cross block lies along the truck at wheel-axle height. Its two end axle holes
+#     point across the truck; its centre pin hole points up.
+#   * A pin stands in that centre hole with its collar seated, and a split block's round
+#     hole slides down over the pin's top half. The split block's two arms then straddle
+#     one end of the cross block, and the wheel's axle pin goes through arm and cross
+#     block together, which is what locks them.
+#   * The rear bogie's second split block is upside down: its round hole sits low, in
+#     front of the cross block, and holds the articulation pin. The front unit's last
+#     split block sits on top of that pin, so the truck bends in the middle.
+AXLE_Y = -19                 # wheel-axle height (tyre radius 19) = level of both cross blocks
+UPPER = AXLE_Y - 20          # one hole row up
+TOP = AXLE_Y - 40            # two rows up: connector holes, L-beam long arm, bed hinges
+REAR_Z = 20                  # rear cross block centre; its axle holes are at z = 0 and 40
+FRONT_Z = -60                # front cross block centre; its axle holes are at z = -80 and -40
+PIVOT_Z = -20                # articulation pin
+REAR_WHEELS = [REAR_Z - 20, REAR_Z + 20]
+FRONT_AXLE_Z = FRONT_Z - 20
+# 92907 again: round hole up, arms towards the front (SPLIT_FRONT) or rear (SPLIT_REAR) with
+# the second hole row below; SPLIT_FLIPPED is upside down, second row above.
+SPLIT_FLIPPED = rot(-X, Z)
 
-def axle_pins(z, y=AXLE_Y, sides=("R", "L")):
+def axle_pins(z, sides=("R", "L")):
+    """3749: axle end through the split block's arm into the cross block, pin end out for the wheel."""
     out = []
-    if "R" in sides: out.append(ref(TAN, (30, y, z), SHAFT_X, "3749.dat"))
-    if "L" in sides: out.append(ref(TAN, (-30, y, z), SHAFT_NX, "3749.dat"))
+    if "R" in sides: out.append(ref(TAN, (20, AXLE_Y, z), SHAFT_X, "3749.dat"))
+    if "L" in sides: out.append(ref(TAN, (-20, AXLE_Y, z), SHAFT_NX, "3749.dat"))
     return out
 
+def seated_pin(z, hole_y=AXLE_Y):
+    """3673 standing in a 1-stud-deep hole centred at hole_y, collar at the hole's top."""
+    return ref(LBG, (0, hole_y - 10, z), SHAFT_UP, "3673.dat")
+
 rear = [
-    [ref(DBG, (0, R_BLOCK_Y + 28, 20), CROSS_BLOCK, "32184.dat"),
-     ref(LBG, (0, R_BLOCK_Y + 8, 20), SHAFT_UP, "3673.dat")],                                    # 1
-    [ref(BLK, (0, R_BLOCK_Y, RB1_Z), SPLIT_REAR, "92907.dat")],                                  # 2
-    axle_pins(REAR_WHEELS[0], sides="R"),                                                        # 3
-    [ref(BLK, (0, R_BLOCK_Y, RB2_Z), SPLIT_REAR, "92907.dat")] + axle_pins(REAR_WHEELS[1], sides="R"),  # 4
+    [ref(DBG, (0, AXLE_Y, REAR_Z), CROSS_BLOCK, "32184.dat"), seated_pin(REAR_Z)],               # 1
+    [ref(BLK, (0, UPPER, REAR_Z), SPLIT_REAR, "92907.dat")],                                     # 2
+    axle_pins(REAR_WHEELS[1], sides="R"),                                                        # 3
+    [ref(BLK, (0, AXLE_Y, PIVOT_Z), SPLIT_FLIPPED, "92907.dat")] + axle_pins(REAR_WHEELS[0], sides="R"),  # 4
     axle_pins(REAR_WHEELS[0], sides="L") + axle_pins(REAR_WHEELS[1], sides="L"),                 # 5
-    [ref(LBG, (0, R_BLOCK_Y - 20, RB2_Z), SHAFT_UP, "3673.dat")],                                # 6
+    [seated_pin(PIVOT_Z)],                                                                       # 6
 ]
 
-FB_Y = R_BLOCK_Y - 20       # front unit's articulation block sits on the rear pin
 front_unit = model("Front Unit.ldr", [
-    [ref(DBG, (0, AXLE_Y + 8, -40), CROSS_BLOCK, "32184.dat"),
-     ref(LBG, (0, AXLE_Y - 12, -40), SHAFT_UP, "3673.dat")],                                     # 7
-    [ref(BLK, (0, AXLE_Y - 20, -30), SPLIT_FRONT, "92907.dat")],                                 # 8
+    [ref(DBG, (0, AXLE_Y, FRONT_Z), CROSS_BLOCK, "32184.dat"), seated_pin(FRONT_Z)],             # 7
+    [ref(BLK, (0, UPPER, FRONT_Z), SPLIT_FRONT, "92907.dat")],                                   # 8
     axle_pins(FRONT_AXLE_Z, sides="R"),                                                          # 9
-    [ref(BLK, (0, AXLE_Y - 30, -15), SHAFT_Z, "32062.dat")] + axle_pins(FRONT_AXLE_Z, sides="L"), # 10
-    [ref(YEL, (0, AXLE_Y - 16, -45), TRIPLE, "63869.dat")],                                      # 11
-    [ref(BLK, (0, FB_Y, RB2_Z), SPLIT_FRONT, "92907.dat"),
-     ref(BLK, (0, FB_Y + 10, RB2_Z - 25), SHAFT_Z, "32062.dat")],                                # 12
+    [ref(BLK, (0, UPPER, FRONT_AXLE_Z), SHAFT_X, "32062.dat")] + axle_pins(FRONT_AXLE_Z, sides="L"),  # 10
+    [ref(YEL, (0, UPPER, FRONT_AXLE_Z), TRIPLE, "63869.dat")],                                   # 11 (axle from 10 pushed through its lug)
+    [ref(BLK, (0, UPPER, PIVOT_Z), SPLIT_FRONT, "92907.dat"),
+     ref(BLK, (0, AXLE_Y, FRONT_Z + 20), SHAFT_X, "32062.dat")],                                 # 12
 ])
 
 # The triple connector's three holes run across the truck at this height, pointing along it.
-HOLE_Y, CONNECTOR_Z = AXLE_Y - 36, -45
+HOLE_Y, CONNECTOR_Z = TOP, FRONT_AXLE_Z
 BEHIND = rot(-X, Y)          # turned 180 degrees
 
 # Cab sub-build (steps 14-15) is the FRONT half: its thin beam sits against the front of
@@ -305,9 +325,11 @@ cab = model("Cab.ldr", [
 CAB_FRONT = (0, HOLE_Y, CONNECTOR_Z - 15)
 CAB_REAR = (0, HOLE_Y, CONNECTOR_Z + 15)
 
-# The L-beam lies along the truck on top of the rear bogie: axle hole at its front end,
-# then three pin holes, short arm pointing down at the back.
-LBEAM_POS = (0, -52, 5)
+# The L-beam lies along the truck on top of the split blocks: axle hole at its front end
+# (over the pivot), then three pin holes; its short arm drops between the arms of the
+# rearmost split block, where an axle through their upper holes holds it.
+LBEAM_POS = (0, TOP, PIVOT_Z)
+LBEAM_PIN_Z = PIVOT_Z + 60
 # One side of the tipper bed: front panel, the axle joining it to the rear panel, and the
 # hinge axle. The two sides face each other across the L-beam; each side's hinge axle goes
 # through the beam (front hole for one side, rear hole for the other) into the other side.
@@ -316,20 +338,21 @@ bed_half = model("Tipper Bed Half.ldr", [
     [ref(YEL, (0, 0, -30), SHAFT_X, "4519.dat")],                                                 # 20
     [ref(YEL, (0, 0, 0), I, "7450.dat")],                                                         # 21
 ])
-BED_POS = (0, LBEAM_POS[1], LBEAM_POS[2] + 30)
+BED_POS = (0, TOP, PIVOT_Z + 30)
 
+WHEEL_X = 30                 # rims sit on the pin ends, which reach from x = 20 to 40
 main = model("42233-3 Dump Truck.ldr", rear + [
     [ref(16, (0, 0, 0), I, "Front Unit.ldr")],                                                   # 13
     [ref(16, CAB_FRONT, I, "Cab.ldr")],                                                          # 16 (after cab sub-build)
     [ref(YEL, CAB_REAR, BEHIND, "7944.dat")],                                                    # 17
     [ref(YEL, LBEAM_POS, LBEAM, "32140.dat"),
-     ref(BLK, (0, AXLE_Y - 22, 40), SHAFT_X, "32062.dat")],                                      # 18
+     ref(BLK, (0, UPPER, LBEAM_PIN_Z), SHAFT_X, "32062.dat")],                                   # 18
     [ref(16, BED_POS, I, "Tipper Bed Half.ldr"),
      ref(16, BED_POS, BEHIND, "Tipper Bed Half.ldr")],                                           # 22
-    [ref(LBG, (40, AXLE_Y, z), WHEEL_R, "42610.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
-    [ref(LBG, (-40, AXLE_Y, z), WHEEL_L, "42610.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
-    [ref(BLK, (40, AXLE_Y, z), WHEEL_R, "50951.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
-    [ref(BLK, (-40, AXLE_Y, z), WHEEL_L, "50951.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS],   # 23
+    [ref(LBG, (WHEEL_X, AXLE_Y, z), WHEEL_R, "42610.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
+    [ref(LBG, (-WHEEL_X, AXLE_Y, z), WHEEL_L, "42610.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
+    [ref(BLK, (WHEEL_X, AXLE_Y, z), WHEEL_R, "50951.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
+    [ref(BLK, (-WHEEL_X, AXLE_Y, z), WHEEL_L, "50951.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS],   # 23
 ])
 
 # The main model references the cab after step 13 but its own steps (14-15) must come

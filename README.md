@@ -11,9 +11,10 @@ Hackathon demo set: **LEGO Technic 42233-3 Dump Truck** (Mighty Machines Series 
 > for 42233 (sheet 3 of 8 on lego.com): the same 23 steps in the same order, with the same
 > sub-builds (front unit 7–12, cab 14–15, tipper-bed half 19–21 ×2). Three new 2026 parts
 > that the LDraw library doesn't have yet (the two cab halves, 7944, and the tipper-bed
-> panels, 7450 and 7451) are modelled from the instruction drawings and placed where their
-> holes line up with the parts they connect to. The chassis positions are matched to the
-> drawings by eye. The scanner looks for "42233" on the box.
+> panels, 7450 and 7451) are modelled from the instruction drawings. Every part sits where
+> it physically connects, with pins and axles fully seated; `pipeline/models/check_42233_3.py`
+> verifies that each pin and axle passes through the holes it should. The scanner looks
+> for "42233" on the box.
 
 ## What's in the repo
 
