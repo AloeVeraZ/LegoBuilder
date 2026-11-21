@@ -451,8 +451,12 @@ final class AppModel {
             guard let self, !Task.isCancelled else { return }
             self.milestone = message
             Haptics.success()
-            if self.readAloud { self.speak(String(format: "done-%03d", self.step + 1), otherwise: "\(message.title) \(message.detail)") }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            let line = String(format: "done-%03d", self.step + 1)
+            if self.readAloud { self.speak(line, otherwise: "\(message.title) \(message.detail)") }
+            // The "good job" stays until its line has been said (here or on the glasses), then
+            // the next step comes: the same moment on phone and glasses.
+            let said = self.readAloud ? StepSpeaker.duration(of: self.model?.recording(line, voice: self.voicePrefix)) + 0.3 : 0
+            try? await Task.sleep(for: .seconds(max(2, said)))
             guard !Task.isCancelled else { return }
             self.milestone = nil
             try? await Task.sleep(nanoseconds: 450_000_000)

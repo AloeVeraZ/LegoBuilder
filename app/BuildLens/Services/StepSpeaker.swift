@@ -2,7 +2,7 @@ import AVFoundation
 
 /// Reads steps out loud (useful hands-free, and the same text will go to the glasses).
 @MainActor
-final class StepSpeaker {
+final class StepSpeaker: NSObject, AVAudioPlayerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
 
     /// The most natural voice on this device: a premium or enhanced one if the owner has
@@ -23,15 +23,34 @@ final class StepSpeaker {
     }()
 
     private var player: AVAudioPlayer?
+    /// The line asked for while another was still being said: it follows once that one ends
+    /// (only the latest is kept), so a line is never cut off by the next.
+    private var waiting: (text: String, recording: URL?)?
 
     /// Plays the recording of a line (a real voice), or reads the words out with the
-    /// phone's own voice when there is no recording.
+    /// phone's own voice when there is no recording. Waits for the line being said to end.
     func say(_ text: String, recording: URL?) {
+        if player?.isPlaying ?? false { waiting = (text, recording); return }
         guard let recording, let player = try? AVAudioPlayer(contentsOf: recording) else { return say(text) }
         stop()
         prepareSession()
+        player.delegate = self
         self.player = player
         player.play()
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            guard player === self.player else { return }
+            self.player = nil
+            if let next = self.waiting { self.waiting = nil; self.say(next.text, recording: next.recording) }
+        }
+    }
+
+    /// How long a recording takes to say (0 if there is none).
+    static func duration(of recording: URL?) -> TimeInterval {
+        guard let recording, let player = try? AVAudioPlayer(contentsOf: recording) else { return 0 }
+        return player.duration
     }
 
     private func prepareSession() {
@@ -66,6 +85,7 @@ final class StepSpeaker {
     var isSpeaking: Bool { synthesizer.isSpeaking || (player?.isPlaying ?? false) }
 
     func stop() {
+        waiting = nil
         player?.stop()
         player = nil
         synthesizer.stopSpeaking(at: .immediate)

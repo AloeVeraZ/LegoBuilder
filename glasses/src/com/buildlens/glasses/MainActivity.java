@@ -811,7 +811,8 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
                     bouncing = false;
                     int seated = slotIn(from, shownView, run);
                     main.postDelayed(() -> { if (run == animation) showGoodJob(from); }, seated);
-                    main.postDelayed(() -> { if (run == animation) { shownMilestone = false; shownStep = -1; show(); } }, seated + GOOD_JOB_MS);
+                    main.postDelayed(() -> { if (run == animation) { shownMilestone = false; shownStep = -1; show(); } },
+                            seated + goodJobMs(from));
                     shownMilestone = true;
                     return;
                 }
@@ -1200,20 +1201,44 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
     }
 
     // ------------------------------------------------------------ read aloud
+    /** A line asked for while another was being said: it follows once that one ends (only the
+     *  latest is kept), so the "good job" and each step are always heard to the end. */
+    private String waitingLine;
+
+    /** The recording of a line, copied out once (a player can't always read inside the app). */
+    private java.io.File clip(String name) throws java.io.IOException {
+        java.io.File file = new java.io.File(getCacheDir(), "voice-" + voicePrefix + name + ".m4a");
+        if (!file.exists()) {
+            try (InputStream in = getAssets().open("voice/voice-" + voicePrefix + name + ".m4a");
+                 java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                byte[] buf = new byte[16384];
+                for (int r; (r = in.read(buf)) > 0; ) out.write(buf, 0, r);
+            }
+        }
+        return file;
+    }
+
+    /** How long the "good job" after `step` shows: at least GOOD_JOB_MS, and until its line is said. */
+    private int goodJobMs(int step) {
+        if (!switches[ALOUD]) return GOOD_JOB_MS;
+        try {
+            android.media.MediaMetadataRetriever m = new android.media.MediaMetadataRetriever();
+            m.setDataSource(clip(String.format(java.util.Locale.US, "done-%03d", step + 1)).getPath());
+            int ms = Integer.parseInt(m.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION));
+            m.release();
+            return Math.max(GOOD_JOB_MS, ms + 300);
+        } catch (Exception e) {
+            return GOOD_JOB_MS;
+        }
+    }
+
     /** Plays one of the phone's recorded lines (voice-<name>.m4a) when READ STEPS ALOUD is on. */
     private void say(String name) {
         if (!switches[ALOUD] || screen != BUILD || menuOpen) return;
-        hush();
+        // Still saying the last line: this one follows it.
+        if (voice != null) { waitingLine = name; return; }
         try {
-            // Copied out once: a player can't always read straight from inside the app.
-            java.io.File file = new java.io.File(getCacheDir(), "voice-" + voicePrefix + name + ".m4a");
-            if (!file.exists()) {
-                try (InputStream in = getAssets().open("voice/voice-" + voicePrefix + name + ".m4a");
-                     java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
-                    byte[] buf = new byte[16384];
-                    for (int r; (r = in.read(buf)) > 0; ) out.write(buf, 0, r);
-                }
-            }
+            java.io.File file = clip(name);
             MediaPlayer player = new MediaPlayer();
             // The alarm channel: the media one is muted to silence the touchpad's clicks.
             player.setAudioAttributes(new android.media.AudioAttributes.Builder()
@@ -1221,8 +1246,18 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build());
             player.setDataSource(file.getPath());
             player.setOnPreparedListener(p -> { p.start(); Log.i(TAG, "voice: " + name); });
-            player.setOnCompletionListener(p -> { if (voice == p) voice = null; p.release(); });
-            player.setOnErrorListener((p, what, extra) -> { Log.w(TAG, "voice " + name + ": error " + what); return false; });
+            player.setOnCompletionListener(p -> {
+                if (voice == p) voice = null;
+                p.release();
+                String next = waitingLine;
+                waitingLine = null;
+                if (next != null) say(next);
+            });
+            player.setOnErrorListener((p, what, extra) -> {
+                Log.w(TAG, "voice " + name + ": error " + what);
+                if (voice == p) voice = null;        // the completion follows (false), which plays what waits
+                return false;
+            });
             player.prepareAsync();
             voice = player;
         } catch (java.io.FileNotFoundException e) {
@@ -1258,6 +1293,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
     }
 
     private void hush() {
+        waitingLine = null;
         MediaPlayer p = voice;
         voice = null;
         if (p != null) { try { p.stop(); } catch (Exception ignored) { } p.release(); }
