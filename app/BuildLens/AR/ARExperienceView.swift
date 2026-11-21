@@ -155,6 +155,13 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         root.scale = SIMD3(repeating: min(max(wanted, baseScale * 0.15), baseScale * 6))
     }
 
+    @objc private func dragged(_ g: UIPanGestureRecognizer) {
+        guard let root = app.scene?.root, anchor != nil, app.arPhase != .scanning else { return }
+        if g.state == .began { root.stopAllAnimations(); twistStart = root.orientation }
+        let turn = Float(g.translation(in: g.view).x) * 0.008
+        root.orientation = simd_quatf(angle: turn, axis: [0, 1, 0]) * twistStart
+    }
+
     @objc private func twisted(_ g: UIRotationGestureRecognizer) {
         guard let root = app.scene?.root, anchor != nil else { return }
         if g.state == .began { root.stopAllAnimations(); twistStart = root.orientation }
@@ -172,19 +179,29 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
 
+    /// Where the model's base goes on screen so that the model fills the part the controls
+    /// leave free (below the top buttons, above the step panel, which covers roughly the
+    /// lower 45% of the screen). The model stands on this point and rises from it, so the
+    /// point is near the bottom of that free area, not its middle.
+    private func freeCentre(of view: ARView) -> CGPoint {
+        CGPoint(x: view.bounds.midX, y: view.bounds.height * 0.48)
+    }
+
     private func placeInFront(found: Bool = false) {
         guard let view else { return }
-        let centre = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        let centre = freeCentre(of: view)
         if let hit = view.raycast(from: centre, allowing: .estimatedPlane, alignment: .horizontal).first {
             place(at: hit.worldTransform.translation, found: found)
             return
         }
+        // No table found yet: put it along the line of sight through that same point,
+        // far enough away for the enlarged model to fit in view.
+        if let ray = view.ray(through: centre) {
+            place(at: ray.origin + simd_normalize(ray.direction) * 1.4, found: found)
+            return
+        }
         let camera = view.cameraTransform
-        let forward = camera.rotation.act(SIMD3<Float>(0, 0, -1))
-        // Far enough away for the enlarged model to fit in view.
-        var position = camera.translation + forward * 1.4
-        position.y -= 0.5
-        place(at: position, found: found)
+        place(at: camera.translation + camera.rotation.act(SIMD3<Float>(0, 0, -1)) * 1.4, found: found)
     }
 
     private func place(at position: SIMD3<Float>, found: Bool) {
@@ -219,6 +236,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             // and a two-finger twist turns it on the spot.
             view.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:))))
             view.addGestureRecognizer(UIRotationGestureRecognizer(target: self, action: #selector(twisted(_:))))
+            // One finger across the screen turns the model, to look at it from any side.
+            let drag = UIPanGestureRecognizer(target: self, action: #selector(dragged(_:)))
+            drag.maximumNumberOfTouches = 1
+            view.addGestureRecognizer(drag)
         }
         if app.arPhase == .scanning {
             app.didPlaceModel(found: found)
