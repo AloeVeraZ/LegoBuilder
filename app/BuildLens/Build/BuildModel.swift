@@ -309,22 +309,34 @@ final class BuildModel {
     }
 
     /// What the app says when "read steps aloud" is on.
+    /// The step as someone would say it: "Step 3 of 23. Add one tan axle pin."
     func spokenSummary(for index: Int) -> String {
         guard index >= 0, index < steps.count else { return "" }
         let step = steps[index]
         var text = "Step \(index + 1) of \(steps.count). "
         if step.isSubAssembly {
-            text += "Build the \(step.assembly.name)"
-            text += step.assembly.uses > 1 ? ", you need \(step.assembly.uses) of these. " : ". "
+            text += "This is for the \(step.assembly.name.lowercased())"
+            text += step.assembly.uses > 1 ? ". You need \(step.assembly.uses) of these. " : ". "
         }
         for sub in step.attaches {
-            text += sub.uses > 1 ? "Attach both \(sub.name) sub-builds. " : "Attach the \(sub.name). "
+            text += sub.uses > 1 ? "Attach both \(sub.name.lowercased()) sub-builds. " : "Attach the \(sub.name.lowercased()). "
         }
+        let words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
         let lines = step.parts.prefix(4).map { line -> String in
-            let name = line.name.replacingOccurrences(of: " x ", with: " by ")
-            return "\(line.count) \(line.colourName.lowercased()) \(name.lowercased())"
+            // Say it the way a person would: no "Technic", sizes read out, and a plural.
+            var name = line.name.lowercased()
+                .replacingOccurrences(of: "technic ", with: "")
+                .replacingOccurrences(of: " x ", with: " by ")
+            name = name.replacingOccurrences(of: #"(\d+)l\b"#, with: "$1 long", options: .regularExpression)
+            if line.count > 1, !name.hasSuffix("s"), name.last?.isLetter == true { name += "s" }
+            let count = line.count < words.count ? words[line.count] : "\(line.count)"
+            return "\(count) \(line.colourName.lowercased()) \(name)"
         }
-        if !lines.isEmpty { text += "Add " + lines.joined(separator: ", ") + "." }
+        if lines.count == 1 {
+            text += "Add \(lines[0])."
+        } else if !lines.isEmpty {
+            text += "Add " + lines.dropLast().joined(separator: ", ") + ", and " + lines[lines.count - 1] + "."
+        }
         if step.parts.count > 4 { text += " And \(step.parts.count - 4) more." }
         return text
     }

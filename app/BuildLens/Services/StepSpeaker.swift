@@ -5,12 +5,41 @@ import AVFoundation
 final class StepSpeaker {
     private let synthesizer = AVSpeechSynthesizer()
 
+    /// The most natural voice on this device: a premium or enhanced one if the owner has
+    /// downloaded any (Settings > Accessibility > Spoken Content > Voices), else the best
+    /// of the built-in ones.
+    private lazy var voice: AVSpeechSynthesisVoice? = {
+        let english = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }
+        func score(_ v: AVSpeechSynthesisVoice) -> Int {
+            var points = v.quality == .premium ? 300 : v.quality == .enhanced ? 200 : 0
+            if v.language == "en-US" { points += 50 }
+            // Of the built-in ones, these read the most naturally.
+            if ["Samantha", "Ava", "Zoe", "Evan", "Nathan", "Joelle"].contains(where: v.name.contains) { points += 20 }
+            // The novelty and old robotic voices are never what anyone wants here.
+            if v.identifier.contains("eloquence") || v.identifier.contains("speech.synthesis.voice") { points -= 500 }
+            return points
+        }
+        return english.max { score($0) < score($1) } ?? AVSpeechSynthesisVoice(language: "en-US")
+    }()
+
     func say(_ text: String) {
         guard !text.isEmpty else { return }
+        #if os(iOS)
+        // Without this the phone's silent switch mutes the reading. If voice control has the
+        // microphone open it has already set the session up for both, so leave that alone.
+        let session = AVAudioSession.sharedInstance()
+        if session.category != .playAndRecord {
+            try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try? session.setActive(true)
+        }
+        #endif
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.voice = voice
+        // A touch slower and lower than the default, which is what makes it sound rushed.
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.94
+        utterance.pitchMultiplier = 0.98
+        utterance.postUtteranceDelay = 0.1
         synthesizer.speak(utterance)
     }
 
