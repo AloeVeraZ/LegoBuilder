@@ -28,6 +28,15 @@ final class OrbitController: NSObject {
     private var startPitch: Float = 0
     private var startDistance: Float = 0
     private var didSetUpScene = false
+    private var cameraGlide: Task<Void, Never>?
+
+    /// How far above the middle of the view the model is shown, as a fraction of half the
+    /// view's height. On iPhone the step controls cover the lower part of the screen.
+    #if os(iOS)
+    var verticalBias: Float = 0.3 { didSet { update() } }
+    #else
+    var verticalBias: Float = 0 { didSet { update() } }
+    #endif
 
     static let background = PlatformColor(red: 0.925, green: 0.933, blue: 0.95, alpha: 1)
 
@@ -62,7 +71,7 @@ final class OrbitController: NSObject {
         anchor.addChild(scene.root)
         scene.root.transform = Transform()
         scene.onFramingChange = { [weak self] centre, radius in
-            self?.frame(centre: centre, radius: radius)
+            self?.frame(centre: centre, radius: radius, animated: true)
         }
         frame(centre: scene.framingCentre, radius: scene.framingRadius)
         installInput(on: view)
@@ -87,8 +96,8 @@ final class OrbitController: NSObject {
         frame(centre: target, radius: radius)
     }
 
-    private func frame(centre: SIMD3<Float>, radius r: Float) {
-        target = centre
+    /// Aims the camera at a sphere. Step changes glide there instead of jumping.
+    private func frame(centre: SIMD3<Float>, radius r: Float, animated: Bool = false) {
         radius = r
         let vfov = camera.camera.fieldOfViewInDegrees * .pi / 180
         var aspect: Float = 0.6
@@ -96,8 +105,28 @@ final class OrbitController: NSObject {
             aspect = Float(size.width / size.height)
         }
         let hfov = 2 * atan(tan(vfov / 2) * aspect)
-        distance = r * 1.2 / sin(min(vfov, hfov) / 2)
-        update()
+        // Fit into the part of the view that is left above the controls.
+        let fitted = r * 1.2 / sin(min(vfov * (1 - verticalBias), hfov) / 2)
+        cameraGlide?.cancel()
+        guard animated else {
+            target = centre
+            distance = fitted
+            update()
+            return
+        }
+        let (fromTarget, fromDistance) = (target, distance)
+        cameraGlide = Task { @MainActor [weak self] in
+            let frames = 36
+            for f in 1 ... frames {
+                guard let self, !Task.isCancelled else { return }
+                let t = Float(f) / Float(frames)
+                let eased = t * t * (3 - 2 * t)
+                self.target = fromTarget + (centre - fromTarget) * eased
+                self.distance = fromDistance + (fitted - fromDistance) * eased
+                self.update()
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
     }
 
     private func clampDistance(_ d: Float) -> Float {
@@ -112,7 +141,13 @@ final class OrbitController: NSObject {
         )
         camera.camera.near = max(distance / 200, 0.0005)
         camera.camera.far = distance * 40
-        camera.look(at: target, from: target + offset, relativeTo: anchor)
+        // Slide the whole camera down so the model appears higher in the view.
+        let forward = simd_normalize(-offset)
+        let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
+        let cameraUp = simd_cross(right, forward)
+        let vfov = camera.camera.fieldOfViewInDegrees * .pi / 180
+        let shift = cameraUp * (verticalBias * distance * tan(vfov / 2))
+        camera.look(at: target - shift, from: target + offset - shift, relativeTo: anchor)
     }
 
     private func addLights() {

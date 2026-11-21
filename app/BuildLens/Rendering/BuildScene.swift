@@ -94,7 +94,7 @@ final class BuildScene {
             entity.transform = Transform(matrix: local * model.instanceMatrices[i])
             entity.isEnabled = true
         }
-        frame(assembly: info.assembly)
+        frame(step: info, local: local)
         let moves = insertionMoves(for: info, local: local)
         if animated { animateIn(moves, local: local) }
         placeArrows(for: moves, local: local)
@@ -133,6 +133,26 @@ final class BuildScene {
         content.position = SIMD3(-centre.x, -lo.y, -centre.z)
         framingCentre = SIMD3(0, (hi.y - lo.y) / 2, 0)
         framingRadius = max(simd_length(hi - lo) / 2, 0.01)
+        onFramingChange?(framingCentre, framingRadius)
+    }
+
+    /// Frames what is on screen in this step, so early steps are not tiny, but never
+    /// closer than a part of the whole model so single pins don't fill the screen.
+    private func frame(step info: BuildModel.StepInfo, local: simd_float4x4) {
+        let (alo, ahi) = BuildModel.bounds(info.assembly.bounds)
+        let centre = (alo + ahi) / 2
+        content.position = SIMD3(-centre.x, -alo.y, -centre.z)
+        guard !info.visible.isEmpty else { return frame(assembly: info.assembly) }
+        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        for i in info.visible {
+            let (plo, phi) = pieceBounds(i, local)
+            lo = pointwiseMin(lo, plo)
+            hi = pointwiseMax(hi, phi)
+        }
+        let whole = max(simd_length(ahi - alo) / 2, 0.01)
+        framingCentre = (lo + hi) / 2 + content.position
+        framingRadius = max(simd_length(hi - lo) / 2 * 1.15, whole * 0.45)
         onFramingChange?(framingCentre, framingRadius)
     }
 
