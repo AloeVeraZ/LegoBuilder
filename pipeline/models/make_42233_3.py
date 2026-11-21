@@ -21,7 +21,18 @@ placed where its holes line up with what it connects to, pins and axles fully se
 import os
 import numpy as np
 
-YEL, BLK, LBG, DBG, TAN = 14, 0, 71, 72, 19
+YEL, BLK, LBG, DBG, TAN, RUBBER = 14, 0, 71, 72, 19, 256
+
+# The colours as the moulded bricks look in LEGO's own photos: LDraw's stock black is a
+# dark navy and its yellow is pale, which is what makes a render look "not quite LEGO".
+COLOURS = [
+    "0 !COLOUR Yellow CODE 14 VALUE #FBB800 EDGE #333333",
+    "0 !COLOUR Black CODE 0 VALUE #1C1C1E EDGE #595959",
+    "0 !COLOUR Rubber_Black CODE 256 VALUE #19191A EDGE #595959 RUBBER",
+    "0 !COLOUR Light_Bluish_Grey CODE 71 VALUE #A5A9AC EDGE #333333",
+    "0 !COLOUR Dark_Bluish_Grey CODE 72 VALUE #62676B EDGE #333333",
+    "0 !COLOUR Tan CODE 19 VALUE #DCC38D EDGE #333333",
+]
 X, Y, Z = np.eye(3)
 UP = -Y
 
@@ -106,6 +117,22 @@ class Mesh:
             inn = np.array([centre[0] - (ix0 + ix1) / 2, centre[1] - (iy0 + iy1) / 2, 0])
             self.face([(ix0, iy0, z0), (ix1, iy1, z0), (ix1, iy1, z1), (ix0, iy0, z1)], inn)
 
+    def raked_ring(self, outer, inner, z_front, z_back):
+        """A frame like ring_prism whose front face leans: z_front(y) gives its depth."""
+        centre = np.mean(np.asarray(outer, float), axis=0)
+        n = len(outer)
+        front = lambda x, y: (x, y, z_front(y))
+        back = lambda x, y: (x, y, z_back)
+        for i in range(n):
+            j = (i + 1) % n
+            o0, o1, i0, i1 = outer[i], outer[j], inner[i], inner[j]
+            self.face([front(*o0), front(*o1), front(*i1), front(*i0)], -Z)
+            self.face([back(*o0), back(*o1), back(*i1), back(*i0)], Z)
+            out = np.array([(o0[0] + o1[0]) / 2 - centre[0], (o0[1] + o1[1]) / 2 - centre[1], 0])
+            self.face([front(*o0), front(*o1), back(*o1), back(*o0)], out)
+            inn = np.array([centre[0] - (i0[0] + i1[0]) / 2, centre[1] - (i0[1] + i1[1]) / 2, 0])
+            self.face([front(*i0), front(*i1), back(*i1), back(*i0)], inn)
+
     def loft(self, a, b, hint):
         """Strip between two matching open 3D polylines. `hint(mid)` gives the outside direction."""
         for i in range(len(a) - 1):
@@ -153,10 +180,12 @@ def part_file(name, title, mesh):
 # yellow triple connector between them and their frames meet over it to make the cab.
 cab_half = Mesh()
 cab_half.lines.append("1 16 -20 0 0 0 0 1 1 0 0 0 1 0 6632.dat")
-cab_half.ring_prism(
+# The frame's outer face is raked like a windscreen: a full stud deep above the beam,
+# half a stud at the roof. Its other face is flat, where the two halves meet.
+cab_half.raked_ring(
     rounded([(29, -8), (20, -44), (-20, -44), (-29, -8)], [1.5, 6, 6, 1.5]),
-    rounded([(23, -13), (16.5, -38.5), (-16.5, -38.5), (-23, -13)], [1.5, 3, 3, 1.5]),
-    -5, 15)
+    rounded([(23, -14), (16.5, -37.5), (-16.5, -37.5), (-23, -14)], [2, 4, 4, 2]),
+    lambda y: -5 + (-8 - y) / 36 * 10, 15)
 
 # 7450 / 7451, tipper-bed quarter panels. Local frame of a bed half: origin on the hinge
 # axis at the seam between its two panels, X out to the side, Z along the truck.
@@ -177,12 +206,12 @@ def bed_panel(sz):
     outward = lambda mid: (mid[0], 0, mid[2])
     inward = lambda mid: (-mid[0], 0, -mid[2])
     up, down = (lambda mid: -Y), (lambda mid: Y)
-    floor_out = tub_outline(30, 42, 9, Y_FLOOR_BOTTOM, sz)
-    wall_top = tub_outline(42, 52, 13, Y_LIP, sz)
-    lip_low = tub_outline(44.5, 54.5, 15.5, Y_LIP, sz)
-    lip_high = tub_outline(44.5, 54.5, 15.5, Y_RIM, sz)
-    rim_in = tub_outline(39, 49, 10, Y_RIM, sz)
-    floor_in = tub_outline(27, 39, 6, Y_FLOOR_TOP, sz)
+    floor_out = tub_outline(36, 42, 13, Y_FLOOR_BOTTOM, sz)
+    wall_top = tub_outline(42, 52, 18, Y_LIP, sz)
+    lip_low = tub_outline(44.5, 54.5, 20.5, Y_LIP, sz)
+    lip_high = tub_outline(44.5, 54.5, 20.5, Y_RIM, sz)
+    rim_in = tub_outline(39, 49, 15, Y_RIM, sz)
+    floor_in = tub_outline(33, 39, 10, Y_FLOOR_TOP, sz)
     m.loft(floor_out, wall_top, outward)
     m.loft(wall_top, lip_low, down)
     m.loft(lip_low, lip_high, outward)
@@ -191,8 +220,8 @@ def bed_panel(sz):
     m.face([(0, Y_FLOOR_TOP, 0)] + floor_in, -Y)
     m.face([(0, Y_FLOOR_BOTTOM, 0)] + floor_out, Y)
     # cut faces where the panel meets its neighbours (z = 0 and x = 0)
-    gx, gz = 27 + 12 * 35 / 38, 39 + 10 * 35 / 38
-    dims = {"floor_out": (30, 42), "floor_in": (27, 39), "wall": (42, 52), "inner": (gx, gz),
+    gx, gz = 33 + 6 * 35 / 38, 39 + 10 * 35 / 38
+    dims = {"floor_out": (36, 42), "floor_in": (33, 39), "wall": (42, 52), "inner": (gx, gz),
             "lip": (44.5, 54.5), "rim": (39, 49)}
     for k, flat, hint in ((0, lambda a, y: (a, y, 0), -sz * Z), (1, lambda a, y: (0, y, sz * a), -X)):
         d = {name: v[k] for name, v in dims.items()}
@@ -202,17 +231,20 @@ def bed_panel(sz):
                 flat(d["inner"], Y_LIP), flat(d["floor_in"], Y_FLOOR_TOP)], hint)
         m.face([flat(d["inner"], Y_LIP), flat(d["lip"], Y_LIP), flat(d["lip"], Y_RIM), flat(d["rim"], Y_RIM)], hint)
     # gusset ribs on the outside of the side wall
-    for zc in (4.5, 17.5, 30):
-        m.prism_z([(30, -9), (36, -9), (43.3, -40), (43.3, Y_LIP), (42, Y_LIP)], sz * zc - 1.2, sz * zc + 1.2)
-    # hinge boss (across the truck) and joining boss (along the truck), each on a short neck
-    m.boss((10, 0, sz * 30), X, 21)
-    m.box(10, 31, -10.5, -3, sz * 30 - 6, sz * 30 + 6)
+    # They stand out to a flat side, as on the moulded part, with the hinge boss between them.
+    for zc in (3, 12, 21):
+        m.prism_z([(36, -9.5), (44.5, -9.5), (44.5, Y_LIP), (42, Y_LIP)], sz * zc - 1.6, sz * zc + 1.6)
+    # hinge boss (across the truck) and joining boss (along the truck), each on a short neck.
+    # The hinge boss runs out to the side of the bed, where its axle hole shows.
+    m.boss((10, 0, sz * 30), X, 34.5)
+    m.box(10, 44.5, -10.5, -3, sz * 30 - 7, sz * 30 + 7)
     m.boss((20, 0, 0), sz * Z, 20)
     m.box(14, 26, -10.5, -3, 0, sz * 20)
     return m
 
 # 50951, tyre. The library version is drawn with 16 flat sides, which shows on the outline,
-# so the same shape is turned here with 48 sides: 38 across, 16 wide, rounded shoulders.
+# so the same shape is turned here with 48 sides: 38 across, as wide as its rim (20), with
+# a flat tread and rounded shoulders.
 def lathe_z(mesh, profile, sides=48):
     """Solid of revolution around Z from a closed (z, r) profile."""
     centre = np.mean(np.asarray(profile, float), axis=0)
@@ -230,7 +262,7 @@ def lathe_z(mesh, profile, sides=48):
             mesh.face([pt(z0, r0, a0), pt(z1, r1, a0), pt(z1, r1, a1), pt(z0, r0, a1)],
                       (orr * np.cos(am), orr * np.sin(am), oz))
 
-def tyre_profile(radius=19, half_width=8, shoulder=3.5, bore=12.2, segs=5):
+def tyre_profile(radius=19, half_width=10, shoulder=3, bore=12.2, segs=5):
     pts = [(-half_width + 1.5, bore), (-half_width, bore + 1.3)]
     for side in (-1, 1):
         arc = []
@@ -385,7 +417,7 @@ main = model("42233-3 Dump Truck.ldr", rear + [
     [push(FROM_RIGHT, ref(16, BED_POS, I, "Tipper Bed Half.ldr"), order=0),
      push(FROM_LEFT, ref(16, BED_POS, BEHIND, "Tipper Bed Half.ldr"), order=0)],                 # 22 (together)
     [wheel(x, z, part, colour, row, still)
-     for part, colour, still in (("42610.dat", LBG, True), ("50951.dat", BLK, False))
+     for part, colour, still in (("42610.dat", LBG, True), ("50951.dat", RUBBER, False))
      for row, z in enumerate([FRONT_AXLE_Z] + REAR_WHEELS) for x in (WHEEL_X, -WHEEL_X)],        # 23
 ])
 
@@ -393,5 +425,5 @@ main = model("42233-3 Dump Truck.ldr", rear + [
 # first, which the converter does automatically for first-time sub-models.
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "42233-3-dump-truck.mpd")
 with open(out, "w") as fh:
-    fh.write("\n".join(main + front_unit + cab + bed_half + files))
+    fh.write("\n".join(main[:5] + COLOURS + main[5:] + front_unit + cab + bed_half + files))
 print(out)

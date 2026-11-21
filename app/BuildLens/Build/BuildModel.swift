@@ -278,6 +278,12 @@ final class BuildModel {
         Self.resource(String(format: "hud-step-%03d-r%d", step + 1, frame), "png", in: bundle)
     }
 
+    /// The finished model turning once round, frames 1...24 (24 is back where it began).
+    static let glassesFinishFrames = 24
+    func glassesFinishURL(frame: Int) -> URL? {
+        Self.resource(String(format: "hud-finish-%02d", frame), "png", in: bundle)
+    }
+
     var heroImageURL: URL? { Self.resource("build-hero", "png", in: bundle) }
 
     var estimatedMinutes: Int { max(1, Int((Double(steps.count) * BuildConfig.minutesPerStep).rounded())) }

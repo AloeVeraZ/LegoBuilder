@@ -76,6 +76,13 @@ if (want('--hud')) {
       for (let j = 1; j <= 4; j++) { await shot(`step-${id}-r${j}.png`, s, { lift: 0, yaw: from + turn * j / 5 }); count++; }
     }
   }
+  // The finish: the completed truck turning once round, from the last step's own side.
+  // The glasses play these twice over, quickly at first and slowing to a stop.
+  const last = views.length - 1;
+  if (stepList.includes(last)) {
+    const base = await page.evaluate(v => BL.viewYaw(v), views[last].view);
+    for (let j = 1; j <= 24; j++) { await shot(`finish-${String(j).padStart(2, '0')}.png`, last, { lift: 0, yaw: base + 2 * Math.PI * j / 24 }); count++; }
+  }
   console.log(`hud frames: ${count}`);
 }
 if (want('--hero')) {

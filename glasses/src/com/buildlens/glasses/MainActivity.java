@@ -1,7 +1,10 @@
 package com.buildlens.glasses;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -77,6 +80,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
     private int clicks;
 
     private ImageView frame;
+    private ConfettiView confetti;
+    private int finishFrames;               // pictures of the finished truck turning round
     private TextView header, sub, parts, status;
     private GestureDetector gestures;
 
@@ -150,6 +155,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
             JSONObject root = new JSONObject(new String(buf, 0, n, StandardCharsets.UTF_8));
             steps = root.getJSONArray("steps");
             setName = root.optString("name");
+            finishFrames = root.optInt("finish", 0);
         } catch (Exception e) {
             Log.e(TAG, "steps.json", e);
             steps = new JSONArray();
@@ -214,6 +220,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
         overlay.addView(spacer, new LinearLayout.LayoutParams(-1, 0, 1f));
         overlay.addView(parts);
         overlay.addView(status);
+        confetti = new ConfettiView(this);
+        root.addView(confetti, new FrameLayout.LayoutParams(-1, -1));
         root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
         root.setOnTouchListener((v, e) -> {
             if (e.getActionMasked() != MotionEvent.ACTION_MOVE) {
@@ -237,12 +245,13 @@ public class MainActivity extends Activity implements LinkService.Listener {
         onLinkChanged();
         if (step == shownStep && finished == shownFinished && view == shownView && milestone == shownMilestone) { wake(); return; }
         stayAwake();
+        confetti.stop();
         try {
             if (finished) {
                 header.setText("DONE \u2713");
                 sub.setText(setName.toUpperCase());
                 parts.setText("");
-                playSeated(step, step == shownStep ? shownView : view);
+                playFinish(step, step == shownStep ? shownView : view);
             } else if (milestone) {
                 showGoodJob(step);
                 playSeated(step, step == shownStep ? shownView : view);
@@ -339,6 +348,77 @@ public class MainActivity extends Activity implements LinkService.Listener {
         settling = false;
         frame.setImageBitmap(load(frameOf(step, view, "-a")));
         main.postDelayed(() -> { if (run == animation) setFrame(step, view, "-b"); }, HALF_MS * 2);
+    }
+
+    /**
+     * The finish: the last piece slots in, the truck spins twice (fast, slowing to a stop
+     * where it began) and confetti goes off. Same timing as the phone's glasses preview.
+     */
+    private void playFinish(final int step, final int view) throws Exception {
+        playSeated(step, view);
+        final int run = animation;
+        if (finishFrames <= 0) return;
+        final int total = finishFrames * 2;
+        final int begin = HALF_MS * 2 + SEATED_MS;
+        for (int k = 1; k <= total; k++) {
+            final int n = (k - 1) % finishFrames + 1;
+            long at = begin + (long) (2800 * (1 - Math.pow(1 - k / (double) total, 0.25)));
+            main.postDelayed(() -> {
+                if (run == animation) frame.setImageBitmap(load(String.format(java.util.Locale.US, "hud/hud-finish-%02d.png", n)));
+            }, at);
+        }
+        main.postDelayed(() -> {
+            if (run != animation) return;
+            setFrame(step, view, "-b");
+            confetti.burst();
+        }, begin + 2850);
+    }
+
+    /** Confetti in the display's one colour: a burst up from the bottom that falls away. */
+    private static class ConfettiView extends View {
+        private static final float DURATION = 2.6f;
+        private final Paint paint = new Paint();
+        private long started = -1;
+
+        ConfettiView(Context context) {
+            super(context);
+            paint.setColor(GREEN);
+        }
+
+        void burst() {
+            started = SystemClock.uptimeMillis();
+            invalidate();
+        }
+
+        void stop() {
+            started = -1;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (started < 0) return;
+            float t = (SystemClock.uptimeMillis() - started) / 1000f;
+            if (t >= DURATION) { started = -1; return; }
+            float unit = getWidth() / 640f;
+            paint.setAlpha((int) (255 * Math.min(1f, (DURATION - t) * 2)));
+            long seed = 42;
+            double[] r = new double[6];
+            for (int i = 0; i < 70; i++) {
+                for (int j = 0; j < 6; j++) {
+                    seed = seed * 6364136223846793005L + 1442695040888963407L;
+                    r[j] = (seed >>> 33) / (double) (1L << 31);
+                }
+                double x0 = 320 + (r[0] - 0.5) * 120, vx = (r[1] - 0.5) * 520;
+                double vy = -(420 + r[2] * 420), spin = r[3] * 12, w = 6 + r[4] * 8;
+                double x = x0 + vx * t, y = 500 + vy * t + 520 * t * t;
+                double squash = Math.abs(Math.cos(spin * t));
+                float h = (float) Math.max(1.5, w * squash);
+                canvas.drawRect((float) (x - w / 2) * unit, (float) (y - h / 2) * unit,
+                        (float) (x + w / 2) * unit, (float) (y + h / 2) * unit, paint);
+            }
+            postInvalidateOnAnimation();
+        }
     }
 
     /** Two clicks: the step again from the start, with a short blank so it reads as a restart. */

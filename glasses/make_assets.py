@@ -52,5 +52,9 @@ for i, s in enumerate(pkg["steps"]):
     attach_lines = [("ATTACH " + (f"{a['uses']}x " if a["uses"] > 1 else "THE ") + a["name"].upper()) for a in attached]
     steps.append({"frame": f"hud/{name}", "view": s.get("view", 0), "turns": turns, "done": done, "sub": sub,
                   "parts": attach_lines + [f"+{n} {colours.get(c, '').upper()} {clean(pkg['parts'][p]['name']).upper()}" for (p, c), n in lines]})
-json.dump({"name": pkg["set"]["name"], "steps": steps}, open(os.path.join(out, "steps.json"), "w"))
+# The finished truck turning once round, for the celebration at the end.
+finish = sorted(f for f in os.listdir(os.path.join(data, "hud")) if f.startswith("hud-finish-"))
+for f in finish:
+    shutil.copy(os.path.join(data, "hud", f), os.path.join(out, "hud", f))
+json.dump({"name": pkg["set"]["name"], "finish": len(finish), "steps": steps}, open(os.path.join(out, "steps.json"), "w"))
 print(f"{len(steps)} steps -> {out}")

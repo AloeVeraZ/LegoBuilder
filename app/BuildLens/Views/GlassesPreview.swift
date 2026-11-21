@@ -13,6 +13,9 @@ struct GlassesPreview: View {
     /// The side the display last settled on, for the slot-in frames of the step being left.
     @State private var settledView = 0
 
+    /// When the confetti went off (nil = none).
+    @State private var confetti: Date?
+
     private struct Playing: Hashable {
         let step: Int
         let finished: Bool
@@ -32,9 +35,28 @@ struct GlassesPreview: View {
             await pause(0.22)
             guard !Task.isCancelled else { return }
             frame = (step, from, "-b")
-            if app.showingFinished { settledStep = -1 }
+            guard app.showingFinished else { return }
+            settledStep = -1
+            // The finish, as on the glasses: the truck spins twice, fast then slowing to a
+            // stop where it began, and confetti goes off.
+            await pause(0.32)
+            guard !Task.isCancelled else { return }
+            let count = BuildModel.glassesFinishFrames
+            guard app.model?.glassesFinishURL(frame: count) != nil else { return }
+            let total = count * 2
+            var elapsed = 0.0
+            for k in 1 ... total {
+                let at = 2.8 * (1 - pow(1 - Double(k) / Double(total), 0.25))
+                await pause(at - elapsed)
+                elapsed = at
+                guard !Task.isCancelled else { return }
+                frame = (step, from, "f\((k - 1) % count + 1)")
+            }
+            frame = (step, from, "-b")
+            confetti = Date()
             return
         }
+        confetti = nil
         if settledStep >= 0, step == settledStep + 1 {
             let before = settledStep
             frame = (before, settledView, "-a")
@@ -64,6 +86,9 @@ struct GlassesPreview: View {
 
     private var frameURL: URL? {
         guard let model = app.model else { return nil }
+        if frame.variant.hasPrefix("f"), let n = Int(frame.variant.dropFirst()) {
+            return model.glassesFinishURL(frame: n)
+        }
         if frame.variant.hasPrefix("r"), let n = Int(frame.variant.dropFirst()) {
             return model.glassesTurnURL(step: frame.step, frame: n)
         }
@@ -116,6 +141,9 @@ struct GlassesPreview: View {
                     .resizable()
                     .scaledToFit()
                     .accessibilityHidden(true)
+            }
+            if let confetti {
+                HUDConfetti(start: confetti)
             }
             GeometryReader { proxy in
                 // Text is sized in the display's own 640-wide coordinates, so the preview
@@ -180,5 +208,37 @@ struct GlassesPreview: View {
         .padding(Theme.Spacing.xl * scale)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Confetti as the glasses draw it: one colour, bursting up from the bottom and falling.
+/// The same numbers as ConfettiView in glasses/.../MainActivity.java.
+private struct HUDConfetti: View {
+    let start: Date
+    private static let duration = 2.6
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                let t = timeline.date.timeIntervalSince(start)
+                guard t < Self.duration else { return }
+                var seed: UInt64 = 42
+                func random() -> Double {
+                    seed = seed &* 6364136223846793005 &+ 1442695040888963407
+                    return Double(seed >> 33) / Double(1 << 31)
+                }
+                let unit = size.width / 640
+                for _ in 0 ..< 70 {
+                    let x0 = 320 + (random() - 0.5) * 120, vx = (random() - 0.5) * 520
+                    let vy = -(420 + random() * 420), spin = random() * 12, w = 6 + random() * 8
+                    let x = x0 + vx * t, y = 500 + vy * t + 520 * t * t
+                    let squash = abs(cos(spin * t))
+                    let rect = CGRect(x: (x - w / 2) * unit, y: (y - w * squash / 2) * unit, width: w * unit, height: max(1.5, w * squash) * unit)
+                    context.fill(Path(rect), with: .color(Theme.Palette.hud.opacity(min(1, (Self.duration - t) * 2))))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
