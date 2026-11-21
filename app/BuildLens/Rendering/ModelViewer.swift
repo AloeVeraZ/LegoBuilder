@@ -175,10 +175,12 @@ final class OrbitController: NSObject {
         }
     }
 
-    /// Zooming in goes up close; zooming out stops at the step as it was framed (zoom 1):
-    /// any smaller and the pieces are too small to see.
+    /// The zoom range, the same as the glasses' (GhostView.MIN_SIZE, MAX_SIZE): out no further
+    /// than the step as it was framed (1), in up to 8 times closer.
+    static let minZoom: Float = 1, maxZoom: Float = 8
+
     private func clampDistance(_ d: Float) -> Float {
-        min(max(d, radius * 0.6), max(fittedDistance, radius * 0.6))
+        min(max(d, fittedDistance / Self.maxZoom), fittedDistance / Self.minZoom)
     }
 
     private func update() {
