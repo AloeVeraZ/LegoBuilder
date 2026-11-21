@@ -58,7 +58,12 @@ public class LinkService extends Service {
         /** The model was turned or zoomed on the phone (or Mac): "spin" degrees, "zoom" (or -1),
          *  "tilt" degrees seen from above (NaN: not sent, e.g. turned in AR). */
         void onRemoteView(float spin, float zoom, float tilt);
+        /** The phone closed its code with its X: start the build without scanning it. */
+        void onScanSkipped();
     }
+
+    /** A skip that came while the screen was away. */
+    static volatile boolean skipWaiting;
 
     static volatile int step = 0;
     static volatile boolean finished = false;
@@ -282,6 +287,10 @@ public class LinkService extends Service {
         // "wake": the phone app has just linked; bring BuildLens up on the glasses.
         if (msg.optBoolean("wake", false)) {
             main.post(() -> { if (listener == null) deliver(false); });
+            if (!msg.has("step")) return;
+        }
+        if (msg.optBoolean("noscan", false)) {
+            main.post(() -> { Listener l = listener; if (l != null) l.onScanSkipped(); else skipWaiting = true; });
             if (!msg.has("step")) return;
         }
         if (msg.optBoolean("box", false)) {

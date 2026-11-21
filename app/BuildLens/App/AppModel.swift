@@ -42,6 +42,14 @@ final class AppModel {
     /// The glasses have placed the build: the phone puts its code away and opens the steps.
     var openInstructionsRequested = false
 
+    /// The Table marker was closed with its X: the glasses build without scanning it (the LEGO
+    /// floats in their view, so it needs no place on the table).
+    func markerSkipped() {
+        markerRequested = false
+        glasses.sendScanSkipped()
+        sync.sendScanSkipped()                 // to the Mac, which passes it to its glasses
+    }
+
     private func glassesPlaced() {
         #if os(macOS)
         sync.sendPlaced()                      // on to the phone
@@ -280,6 +288,9 @@ final class AppModel {
             }
             #endif
             sync.onPlaced = { [weak self] in self?.glassesPlaced() }
+            #if os(macOS)
+            sync.onScanSkipped = { [weak self] in self?.glasses.sendScanSkipped() }
+            #endif
             glasses.onPlaced = { [weak self] in self?.glassesPlaced() }
             glasses.onSettings = { [weak self] fade, voice, aloud in self?.settingsFromGlasses(fade: fade, voice: voice, aloud: aloud) }
             sync.onRemoteView = { [weak self] spin, zoom, tilt in self?.remoteView(spin: spin, zoom: zoom, tilt: tilt, fromGlasses: false) }

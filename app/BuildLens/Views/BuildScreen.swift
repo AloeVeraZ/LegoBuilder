@@ -86,7 +86,7 @@ struct BuildScreen: View {
         .onDisappear { app.leaveInstructions() }
         #if os(iOS)
         .statusBarHidden(mode == .ar)
-        .fullScreenCover(isPresented: $showMarker, onDismiss: { app.markerRequested = false }) { MarkerCard(keepAwake: app.keepAwake) }
+        .fullScreenCover(isPresented: $showMarker, onDismiss: { app.markerRequested = false }) { MarkerCard(keepAwake: app.keepAwake, onClose: { app.markerSkipped() }) }
         // The glasses asked for the code (they are scanning the phone).
         .onChange(of: app.markerRequested) { _, wanted in showMarker = wanted }
         .onAppear { if app.markerRequested { showMarker = true } }

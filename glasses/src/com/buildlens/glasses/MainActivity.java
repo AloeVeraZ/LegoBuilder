@@ -231,7 +231,21 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
      * wearer's eye in one go, then the build starts with the next piece on the table.
      * From the start screen, the menu, or setup.sh.
      */
+    /** The phone closed its code without the glasses scanning it: the LEGO floats in the view
+     *  (FOLLOW_VIEW), which needs no place on the table, so the build starts without it. */
+    private boolean scanSkipped;
+
+    @Override
+    public void onScanSkipped() {
+        Log.i(TAG, "scan: skipped on the phone");
+        scanSkipped = true;
+        CameraFeed.lookForBox = false;
+        if (lineup.active()) { lineup.cancel(); return; }      // its callback goes on to the build
+        if (screen == BOX || screen == SCAN || screen == HOME) { LinkService.askForMarker(false); showScreen(BUILD); shownStep = -1; show(); }
+    }
+
     private void startLineup() {
+        scanSkipped = false;
         closeMenu();
         setGhost(false);
         ghost.clearAnchor();                 // a new scan: placed afresh
@@ -241,7 +255,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         lineup.begin(linedUp -> {
             LinkService.askForMarker(false);
             // No tap for a while: keep waiting on the scan (no dead end on a start screen).
-            if (!linedUp) { startLineup(); return; }
+            if (!linedUp && !scanSkipped) { startLineup(); return; }
             showScreen(BUILD);
             shownStep = -1;
             show();
@@ -445,6 +459,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         // What the phone said while this screen was away.
         if (LinkService.haveSettings) onSettings(LinkService.settingsFade, LinkService.settingsVoice, LinkService.settingsAloud);
         if (LinkService.boxWaiting) { LinkService.boxWaiting = false; onBoxScanned(); }
+        if (LinkService.skipWaiting) { LinkService.skipWaiting = false; onScanSkipped(); }
         quietClicks(true);
         head.start();
         show();
@@ -522,10 +537,10 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
                     time, q[0], q[1], q[2], q[3], pose[0], pose[4], pose[8], pose[1], pose[5], pose[9], pose[2], pose[6], pose[10]));
         }
         // Following the view, the LEGO shows the whole time while building (once placed).
-        if (GhostView.FOLLOW_VIEW ? screen == BUILD && lineup.linedUp() : head.works() && ghost.anchored()) pose = HELD;
+        if (GhostView.FOLLOW_VIEW ? screen == BUILD && (lineup.linedUp() || scanSkipped) : head.works() && ghost.anchored()) pose = HELD;
         // Only once lined up: before that the ghost would land somewhere other than where the
         // wearer is looking. (The Mac's live view draws it from the camera either way.)
-        boolean on = pose != null && screen == BUILD && lineup.linedUp() && !menuOpen && !lineup.active()
+        boolean on = pose != null && screen == BUILD && (lineup.linedUp() || (GhostView.FOLLOW_VIEW && scanSkipped)) && !menuOpen && !lineup.active()
                 && !LinkService.finished && ghostModel != null;
         if (on) {
             ghost.setStep(LinkService.step);

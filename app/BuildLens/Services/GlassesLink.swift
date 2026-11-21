@@ -80,6 +80,11 @@ final class GlassesLink {
     var onRemoteView: ((Double, Double?, Double?) -> Void)?
 
     /// The set's box was scanned here: the glasses need not scan it themselves.
+    /// The phone closed its code: the glasses build without scanning it.
+    func sendScanSkipped() {
+        write("{\"noscan\":true}\n")
+    }
+
     func sendBoxScanned() {
         write("{\"box\":true}\n")
     }

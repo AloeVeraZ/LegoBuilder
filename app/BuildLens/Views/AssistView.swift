@@ -265,6 +265,8 @@ struct MarkerCard: View {
     @Environment(\.dismiss) private var dismiss
     /// Decides whether the screen stays on once the marker is away (it does while linked).
     var keepAwake: KeepAwake?
+    /// Closed with its X (not put away because the glasses found it).
+    var onClose: (() -> Void)?
     /** The screen's brightness before the marker went up, to put back. */
     @State private var brightness: CGFloat?
 
@@ -282,6 +284,7 @@ struct MarkerCard: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             Button {
+                onClose?()
                 dismiss()
             } label: {
                 // Dark on the white card, so it can be seen.
