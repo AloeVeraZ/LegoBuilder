@@ -3,6 +3,7 @@ package com.buildlens.glasses;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Bitmap;
@@ -46,11 +47,16 @@ import java.nio.charset.StandardCharsets;
  * Swiping the touchpad forward or back zooms the picture in or out. Every key and touch is logged so
  * unknown buttons can be mapped (see KEYS below): adb logcat -s BuildLens
  *
- * Battery: nothing is rendered here. Every picture was drawn on a computer and is only
- * shown, each one decoded once; the bounce is two pictures swapped by a timer and stops
- * after a while with no input. The phone link lives in LinkService.
+ * Battery: the step pictures were drawn on a computer and are only shown, each one decoded
+ * once; the bounce is two pictures swapped by a timer and stops after a while with no
+ * input. The phone link lives in LinkService.
+ *
+ * The ghost: when the camera sees the marker on the phone lying on the table, the step
+ * pictures give way to the step's pieces drawn in green right where they go on the real
+ * build (GhostView), and come back when the marker is out of sight. Lining the camera up
+ * with the eye is done once (Lineup), started from the computer by setup.sh.
  */
-public class MainActivity extends Activity implements LinkService.Listener {
+public class MainActivity extends Activity implements LinkService.Listener, CameraFeed.Listener {
     static final String TAG = LinkService.TAG;
     static final int GREEN = Color.rgb(92, 255, 128);
 
@@ -89,6 +95,19 @@ public class MainActivity extends Activity implements LinkService.Listener {
     private TextView header, sub, parts, status;
     private GestureDetector gestures;
 
+    private LinearLayout overlay;
+    private GhostModel ghostModel;
+    private GhostView ghost;
+    private Lineup lineup;
+    private CameraFeed camera;
+    private boolean ghostOn;
+    private float[] markerCentre;           // where the camera last saw the marker's middle
+    private CameraFeed.Lens lens;
+    /** A still picture to look at instead of the camera (for trying it on the emulator). */
+    private String testPicture;
+    /** After lining up, the marker's outline is shown for a while so the fit can be checked. */
+    private long showMarkerUntil;
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -98,7 +117,9 @@ public class MainActivity extends Activity implements LinkService.Listener {
                 | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         LinkService.start(this);
         loadSteps();
+        ghostModel = GhostModel.load(getAssets());
         buildUi();
+        camera = new CameraFeed(this, this);
         gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             // Without this the view is only ever sent the first touch and no tap or swipe is seen.
             @Override public boolean onDown(MotionEvent e) { return true; }
@@ -111,6 +132,46 @@ public class MainActivity extends Activity implements LinkService.Listener {
             }
         });
         logInputDevices();
+        getExternalFilesDir(null);          // makes the app's own folder, for test pictures
+        readIntent(getIntent());
+    }
+
+    /**
+     * Extras from setup.sh / adb:  --ez lineup true  starts lining up the camera with the eye;
+     * --es picture /sdcard/x.png  looks at that picture instead of the camera.
+     */
+    private void readIntent(Intent intent) {
+        if (intent == null) return;
+        if (intent.hasExtra("picture")) {
+            // A plain name is looked for in the app's own folder, which needs no permission:
+            // adb push x.png /sdcard/Android/data/com.buildlens.glasses/files/
+            String name = intent.getStringExtra("picture");
+            java.io.File folder = getExternalFilesDir(null);
+            testPicture = name == null || name.isEmpty() || name.equals("camera") ? null       // back to the camera
+                    : name.startsWith("/") || folder == null ? name : new java.io.File(folder, name).getPath();
+        }
+        if (intent.getBooleanExtra("lineup", false)) {
+            intent.removeExtra("lineup");
+            setGhost(false);
+            // Only the crosshair while lining up, so the real marker is easy to see.
+            frame.setVisibility(View.GONE);
+            overlay.setVisibility(View.INVISIBLE);
+            lineup.begin(linedUp -> {
+                overlay.setVisibility(View.VISIBLE);
+                frame.setVisibility(ghostOn ? View.GONE : View.VISIBLE);
+                if (!linedUp) return;
+                showMarkerUntil = SystemClock.uptimeMillis() + 10_000;
+                // For setup.sh, which can read this folder: the glasses are lined up.
+                java.io.File folder = getExternalFilesDir(null);
+                if (folder != null) {
+                    try (java.io.FileOutputStream out = new java.io.FileOutputStream(new java.io.File(folder, "lined-up"))) {
+                        out.write("yes\n".getBytes(StandardCharsets.UTF_8));
+                    } catch (Exception e) {
+                        Log.w(TAG, "lined-up file", e);
+                    }
+                }
+            });
+        }
     }
 
     @Override
@@ -118,11 +179,28 @@ public class MainActivity extends Activity implements LinkService.Listener {
         super.onResume();
         LinkService.setListener(this);
         show();
+        ghost.onResume();
+        startCamera();
+    }
+
+    private void startCamera() {
+        if (testPicture != null) { camera.stop(); camera.startPicture(testPicture); return; }
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) camera.start();
+        else requestPermissions(new String[] {android.Manifest.permission.CAMERA}, 1);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) camera.start();
+        else Log.w(TAG, "no camera permission: the ghost stays off (setup.sh grants it)");
     }
 
     @Override
     protected void onPause() {
         LinkService.setListener(null);
+        camera.stop();
+        setGhost(false);
+        ghost.onPause();
         animation++;                        // stop every timer while nothing is visible
         bouncing = false;
         settling = false;
@@ -138,6 +216,36 @@ public class MainActivity extends Activity implements LinkService.Listener {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        readIntent(intent);                  // onResume follows and starts the camera or picture
+    }
+
+    // ------------------------------------------------------------ the ghost
+    @Override
+    public void onMarker(float[] pose, float[] centre, CameraFeed.Lens lens) {
+        markerCentre = centre;
+        this.lens = lens;
+        boolean on = pose != null && !lineup.active() && !LinkService.finished && ghostModel != null;
+        if (on) {
+            ghost.setStep(LinkService.step);
+            ghost.setShowMarker(SystemClock.uptimeMillis() < showMarkerUntil);
+            ghost.show(pose, lineup.toDisplay(lens, ghost.getWidth(), ghost.getHeight()));
+        }
+        setGhost(on);
+    }
+
+    @Override
+    public void onNoCamera() {
+        setGhost(false);
+    }
+
+    /** The ghost in place of the step pictures, or the pictures back. */
+    private void setGhost(boolean on) {
+        if (!on && ghost != null) ghost.show(null, null);
+        if (on == ghostOn) return;
+        ghostOn = on;
+        Log.i(TAG, on ? "ghost: marker seen" : "ghost: marker gone");
+        frame.setVisibility(on ? View.GONE : View.VISIBLE);
+        if (!on) wake();
     }
 
     // ------------------------------------------------------------ phone link
@@ -207,11 +315,16 @@ public class MainActivity extends Activity implements LinkService.Listener {
     private void buildUi() {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
+        // The ghost is drawn over everything, see-through where it has nothing; the step
+        // pictures are hidden while it shows.
+        ghost = new GhostView(this, ghostModel);
+        root.addView(ghost, new FrameLayout.LayoutParams(-1, -1));
         frame = new ImageView(this);
         frame.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        frame.setBackgroundColor(Color.BLACK);
         root.addView(frame, new FrameLayout.LayoutParams(-1, -1));
 
-        LinearLayout overlay = new LinearLayout(this);
+        overlay = new LinearLayout(this);
         overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setPadding(18, 14, 18, 14);
         header = label(22, true);
@@ -228,6 +341,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
         confetti = new ConfettiView(this);
         root.addView(confetti, new FrameLayout.LayoutParams(-1, -1));
         root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        lineup = new Lineup(this);
+        root.addView(lineup, new FrameLayout.LayoutParams(-1, -1));
         root.setOnTouchListener((v, e) -> {
             if (e.getActionMasked() != MotionEvent.ACTION_MOVE) {
                 Log.i(TAG, "touch " + MotionEvent.actionToString(e.getAction()) + " source 0x"
@@ -248,6 +363,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
         int view = viewOf(step);
         LinkService.step = step;
         onLinkChanged();
+        if (ghost != null) ghost.setStep(step);
+        if (finished && ghostOn) setGhost(false);
         if (step == shownStep && finished == shownFinished && view == shownView && milestone == shownMilestone) { wake(); return; }
         stayAwake();
         confetti.stop();
@@ -539,6 +656,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
 
     /** One press of the main button or a tap. Waits a moment to see if more follow. */
     private void click() {
+        if (lineup.active()) { lineup.click(markerCentre, lens); return; }
         clicks++;
         main.removeCallbacks(resolveClicks);
         if (clicks >= 3) resolveClicks.run();

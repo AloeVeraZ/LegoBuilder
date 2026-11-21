@@ -39,27 +39,18 @@ the installed copy.
 
 1. In **MLDemo** on the iPhone: connect the glasses, open the **Wi-Fi** screen and join them
    to the **same Wi-Fi as the iPhone**, then **Glasses screen › Developer › Developer Mode** on.
-2. Plug the glasses into this Mac with their USB cable.
-3. Check the Mac sees them (should print a line with `model:XNM_Glass`):
+2. Plug the glasses into this Mac with their USB cable and run:
 
    ```bash
-   adb devices -l
+   glasses/setup.sh
    ```
 
-4. Install the app:
+   It installs the app (camera allowed), opens it, and then walks you through lining up
+   the camera with your eye: on the iPhone open **Instructions › ••• › Table marker** and lay
+   the phone flat, put the glasses on, look so the code sits in the green circle and click;
+   then the same for a second circle. You should then see "STEP 1/23" in green.
 
-   ```bash
-   adb install -r glasses/dist/BuildLensGlasses.apk
-   ```
-
-5. Open it once. Android only lets an app start by itself after it has been opened once;
-   from then on it starts when the glasses are switched on.
-
-   ```bash
-   adb shell am start -n com.buildlens.glasses/.MainActivity
-   ```
-
-   You should see "STEP 1/23" in green in the glasses.
+   If it says no glasses were found, it tells you what to check.
 
 ## 3. Teach it the glasses' buttons (about 2 minutes)
 
@@ -75,7 +66,7 @@ adb logcat -s BuildLens
 - If a control does nothing, paste the lines it printed to Claude and say which control it
   was. It is a one-line change in `KEYS` at the bottom of
   `glasses/src/com/buildlens/glasses/MainActivity.java`, then rebuild and reinstall
-  (`glasses/build.sh`, then step 4 above).
+  (`glasses/build.sh`, then `glasses/setup.sh`).
 
 ## 4. Check the two together
 
@@ -91,9 +82,22 @@ If the tile only says **Instructions · Open**, the phone has not found the glas
   other. The reliable fix is to turn on **Personal Hotspot** on the iPhone and join the
   glasses to it in MLDemo.
 - Make sure Local Network is allowed for BuildLens (step 1.9).
-- Make sure the glasses app was opened once (step 2.5).
+- Make sure the glasses app was opened once (`glasses/setup.sh` does that).
 
-## 5. If something fails during the demo
+## 5. The ghost (green piece on the real build)
+
+1. On the iPhone: **Instructions › ••• › Table marker**, and lay the phone flat on the table.
+2. Wearing the glasses, look at the phone from where you sit. The step picture gives way to
+   a dashed green ring on the table right of the phone, with the step's new piece going in
+   where it belongs. Build on that ring.
+3. Click on the glasses to move on as usual. Look away from the phone and the step pictures
+   come back.
+
+If the ring sits beside where it should be, run `glasses/setup.sh lineup` and line up again
+at the distance you build at. If nothing shows, `adb logcat -s BuildLens` says whether the
+camera opened and how often it sees the marker.
+
+## 6. If something fails during the demo
 
 - **Glasses link down:** the phone app works fully on its own. In the build screen, the
   **•••** menu has **Glasses preview**, which shows exactly what the glasses would show.
@@ -122,6 +126,10 @@ Not verified, because it needs the real hardware:
   buttons send, whether the glasses' own software lets an app start at switch-on or keeps
   the display awake.
 - The phone finding the glasses over the venue's Wi-Fi.
+- The ghost on the glasses: whether their camera can be used by an app at all, how sharp
+  it is, and how well the line-up holds. Its parts are checked on this Mac (the marker
+  finder on made-up camera pictures: within about 1 mm where the build stands) and on the
+  emulator (camera opening, ghost drawing, line-up flow), never on the real glasses.
 
 ## Submitting
 

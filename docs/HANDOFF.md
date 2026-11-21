@@ -149,22 +149,40 @@ piece must sit on that spot, not loose in a hand. The user accepted this ("great
   Also `MarkerCard`: the full-screen marker on the phone (••• menu › Table marker).
 - `GlassesPreview` on the Mac has a **Live** button that shows `AssistView`, with the Mac's
   camera standing in for the glasses' camera.
-- **Nobody has run Live with a real camera and marker yet.** First thing to do: have the
-  user try it (phone: Instructions › ••• › Table marker; Mac: Glasses preview › Live, allow
-  the camera) and fix what turns up.
+- **Nobody has run Live with a real camera and marker yet.**
 
-**Not built yet, roughly in order:**
-1. Confirm an app can use the camera on the real glasses (Camera2 on Android 9) and what
-   it sees. Everything below depends on this.
-2. Get the ghost onto the glasses' display. Two routes: draw it on the glasses (port the
-   projection to Android `Canvas`, ship the step geometry in the APK), or have the phone
-   render and stream pictures over the existing link. On the glasses only the green is
-   drawn, on black.
-3. Line the picture up with what the wearer sees: the camera and the eye are in different
-   places, so this needs a calibration step done with the glasses on.
-4. Noticing that a piece has really been pressed in, to move on by itself. Today the user
-   still presses Next / clicks.
-5. While the phone shows the marker it cannot show the steps; decide whether that matters.
+**On the glasses (built 2026-11-21, `glasses/`; the user asked that this work stay on the
+glasses side and not touch the phone or Mac apps):**
+- The glasses draw the ghost themselves; the phone only shows the marker (its existing
+  `MarkerCard`). Nothing new goes over the link.
+- `CameraFeed` (Camera2, YUV, ≤1280 wide, ~15 searches/s, logs everything the camera reports),
+  `QrFinder` (own finder, no library: three finder squares + the alignment square, then all
+  27×27 cells checked against the phone's exact marker, so other QR codes are ignored),
+  `MarkerRefine` (fits the whole marker picture to the image, Gauss-Newton; this is what
+  makes it accurate: the four squares alone were off by up to 5 cm at the build spot),
+  `MarkerPose` (same maths as the phone), `GhostView` (OpenGL ES 2, on top of the window
+  and see-through), `GhostModel` (step shapes from `make_assets.py`: `assets/ghost.*`,
+  ~21k triangles), `Lineup` (two-click camera-to-eye line-up, saved; started by
+  `glasses/setup.sh`, which also installs with the camera allowed).
+- The ghost switches on by itself when the marker is seen and off when it is lost; the
+  step pictures come back.
+- Checked: `glasses/tools/test_marker.sh` (made-up pictures: 8 of 10 found, the 2 misses are
+  cells of 2-3 px; no false finds; build spot within 1.3 mm). On the Android 9 emulator:
+  the real Camera2 path opens and runs; with a still picture the ghost lands where the
+  picture's geometry says (ring at 386,237 vs 386,240 expected); the slide-in animates;
+  the line-up flow and `setup.sh` run end to end; pause/resume stress, no crashes.
+- **Never run on the real glasses.** Unknown: whether an app may use their camera, its
+  resolution and lens, how it is mounted (the default mapping turns the picture by
+  `SENSOR_ORIENTATION`; the line-up fixes any turn), and the display's real field of view.
+
+**Still open:**
+1. Run it on the real glasses: `glasses/setup.sh`, then read `adb logcat -s BuildLens`
+   for the camera lines.
+2. The line-up is a 2D fit (turn, size, shift) done at one distance; nearer or further the
+   ghost drifts a little. A full 3D eye calibration would fix that.
+3. Noticing that a piece has really been pressed in, to move on by itself. Today the user
+   still clicks.
+4. While the phone shows the marker it cannot show the steps (the glasses show them).
 
 Be straight with the user about which of these work and which are untested; they would
 rather hear it than have a demo fail in front of judges.
