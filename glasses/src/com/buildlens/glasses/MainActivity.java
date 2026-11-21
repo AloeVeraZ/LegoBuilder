@@ -40,7 +40,7 @@ import java.nio.charset.StandardCharsets;
  *   one click     next step
  *   two clicks    show this step again from the start
  *   three clicks  back one step
- * Swipes and arrow keys also go forward and back directly. Every key and touch is logged so
+ * Swiping the touchpad forward or back zooms the picture in or out. Every key and touch is logged so
  * unknown buttons can be mapped (see KEYS below): adb logcat -s BuildLens
  *
  * Battery: nothing is rendered here. Every picture was drawn on a computer and is only
@@ -97,7 +97,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
             @Override public boolean onFling(MotionEvent a, MotionEvent b, float vx, float vy) {
                 if (!directStepAllowed()) return true;
                 boolean forward = Math.abs(vx) > Math.abs(vy) ? vx < 0 : vy < 0;
-                if (forward) next(); else back();
+                zoom(forward);
                 return true;
             }
         });
@@ -394,6 +394,18 @@ public class MainActivity extends Activity implements LinkService.Listener {
         else startBounce(++animation);
     }
 
+    // ------------------------------------------------------------ zoom
+    /** The picture can be enlarged in place; the text stays the same size. */
+    private static final float[] ZOOMS = {1f, 1.5f, 2.2f, 3.2f};
+    private int zoomLevel = 0;
+
+    /** Swipe forward to zoom in, back to zoom out. It keeps its level from step to step. */
+    private void zoom(boolean in) {
+        zoomLevel = Math.max(0, Math.min(ZOOMS.length - 1, zoomLevel + (in ? 1 : -1)));
+        frame.animate().scaleX(ZOOMS[zoomLevel]).scaleY(ZOOMS[zoomLevel]).setDuration(180).start();
+        wake();
+    }
+
     // ------------------------------------------------------------ actions
     private void next() {
         if (LinkService.finished) return;
@@ -437,16 +449,19 @@ public class MainActivity extends Activity implements LinkService.Listener {
     // What each key does. Nothing public documents the M6's key codes, so this follows what
     // similar glasses send (tap = centre/enter, swipes = left/right) and is the one place to
     // edit once `adb logcat -s BuildLens` shows what the real buttons send.
-    private static final int CLICK = 1, NEXT = 2, BACK = 3;
+    private static final int CLICK = 1, NEXT = 2, BACK = 3, ZOOM_IN = 4, ZOOM_OUT = 5;
     private static final SparseIntArray KEYS = new SparseIntArray();
     static {
         for (int code : new int[] {KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
                 KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK,
                 KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_CAMERA}) KEYS.put(code, CLICK);
-        for (int code : new int[] {KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_PAGE_DOWN,
-                KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_TAB}) KEYS.put(code, NEXT);
-        for (int code : new int[] {KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_PAGE_UP,
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_DEL}) KEYS.put(code, BACK);
+        // A swipe on the touchpad (arrow keys on most glasses) zooms the picture; steps are clicks.
+        for (int code : new int[] {KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_ZOOM_IN, KeyEvent.KEYCODE_VOLUME_UP}) KEYS.put(code, ZOOM_IN);
+        for (int code : new int[] {KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP,
+                KeyEvent.KEYCODE_ZOOM_OUT, KeyEvent.KEYCODE_VOLUME_DOWN}) KEYS.put(code, ZOOM_OUT);
+        for (int code : new int[] {KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_TAB}) KEYS.put(code, NEXT);
+        for (int code : new int[] {KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_DEL}) KEYS.put(code, BACK);
     }
     /** A swipe on a touchpad often arrives as a burst of arrow keys: one step per burst. */
     private static final int STEP_EVERY_MS = 300;
@@ -475,7 +490,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
         if (action == CLICK) {
             if (e.getAction() == KeyEvent.ACTION_UP && !e.isCanceled()) click();
         } else if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0 && directStepAllowed()) {
-            if (action == NEXT) next(); else back();
+            if (action == NEXT) next(); else if (action == BACK) back(); else zoom(action == ZOOM_IN);
         }
         return true;
     }

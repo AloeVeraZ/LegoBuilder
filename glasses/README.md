@@ -15,7 +15,7 @@ a sub-build) and the pieces to add.
 - **Both ways.** A step changed on the phone shows on the glasses and the other way round.
 - **Controls** (side button, touchpad tap or ring):
   one click = next step, two clicks = this step again, three clicks = back one step.
-  Swipes and arrow keys also go forward and back.
+  Swiping the touchpad forward zooms the picture in, back zooms it out.
 - **Battery.** The glasses render nothing: every picture is drawn on a computer by the
   pipeline and only shown here. The arrow's bounce is two pictures swapped by a timer and
   stops after 20 seconds without input; after 5 idle minutes the display may sleep.

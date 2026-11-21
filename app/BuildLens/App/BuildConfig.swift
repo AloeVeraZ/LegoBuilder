@@ -14,9 +14,10 @@ enum BuildConfig {
     static let boxImageWidthMeters: CGFloat = 0.19
 
     /// In AR the finished model is shown about this long, in metres: far bigger than the
-    /// real thing (which is under 7 cm), so every piece is easy to see from where you stand.
+    /// real thing (which is under 7 cm), so every piece is easy to see from where you stand (the first pieces come out
+    /// the size of a shoebox).
     /// Pinch changes it afterwards.
-    static let arTargetSize: Float = 0.6
+    static let arTargetSize: Float = 2.4
 
     /// Rough minutes per step, for the "about N minutes" estimate.
     static let minutesPerStep: Double = 0.6

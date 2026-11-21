@@ -36,6 +36,9 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var lastScan: TimeInterval = 0
     private var readingText = false
     private var gesturesInstalled = false
+    private var baseScale: Float = 1
+    private var pinchStart: Float = 1
+    private var twistStart = simd_quatf(angle: 0, axis: [0, 1, 0])
     private var placeWhenTracking = false
 
     init(app: AppModel) {
@@ -143,6 +146,21 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
 
+    // MARK: resizing and turning in place
+
+    @objc private func pinched(_ g: UIPinchGestureRecognizer) {
+        guard let root = app.scene?.root, anchor != nil else { return }
+        if g.state == .began { root.stopAllAnimations(); pinchStart = root.scale.x }
+        let wanted = pinchStart * Float(g.scale)
+        root.scale = SIMD3(repeating: min(max(wanted, baseScale * 0.15), baseScale * 6))
+    }
+
+    @objc private func twisted(_ g: UIRotationGestureRecognizer) {
+        guard let root = app.scene?.root, anchor != nil else { return }
+        if g.state == .began { root.stopAllAnimations(); twistStart = root.orientation }
+        root.orientation = simd_quatf(angle: -Float(g.rotation), axis: [0, 1, 0]) * twistStart
+    }
+
     // MARK: placing the model
 
     private func place(atScreenPoint point: CGPoint, found: Bool) {
@@ -164,8 +182,8 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         let camera = view.cameraTransform
         let forward = camera.rotation.act(SIMD3<Float>(0, 0, -1))
         // Far enough away for the enlarged model to fit in view.
-        var position = camera.translation + forward * 0.9
-        position.y -= 0.3
+        var position = camera.translation + forward * 1.4
+        position.y -= 0.5
         place(at: position, found: found)
     }
 
@@ -193,9 +211,14 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         scene.root.transform = Transform(scale: SIMD3(repeating: scale * 0.02), rotation: simd_quatf(angle: yaw - .pi * 0.9, axis: [0, 1, 0]), translation: .zero)
         _ = scene.root.move(to: finalTransform, relativeTo: anchor, duration: 0.9, timingFunction: .easeOut)
 
+        baseScale = scale
         if !gesturesInstalled {
             gesturesInstalled = true
-            _ = view.installGestures([.translation, .rotation, .scale], for: scene.root)
+            // The model stays where it was put: no dragging it around the room. Spreading
+            // two fingers anywhere on the screen makes it bigger, pinching makes it smaller,
+            // and a two-finger twist turns it on the spot.
+            view.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:))))
+            view.addGestureRecognizer(UIRotationGestureRecognizer(target: self, action: #selector(twisted(_:))))
         }
         if app.arPhase == .scanning {
             app.didPlaceModel(found: found)
