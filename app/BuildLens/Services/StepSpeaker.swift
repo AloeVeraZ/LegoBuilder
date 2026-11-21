@@ -22,8 +22,19 @@ final class StepSpeaker {
         return english.max { score($0) < score($1) } ?? AVSpeechSynthesisVoice(language: "en-US")
     }()
 
-    func say(_ text: String) {
-        guard !text.isEmpty else { return }
+    private var player: AVAudioPlayer?
+
+    /// Plays the recording of a line (a real voice), or reads the words out with the
+    /// phone's own voice when there is no recording.
+    func say(_ text: String, recording: URL?) {
+        guard let recording, let player = try? AVAudioPlayer(contentsOf: recording) else { return say(text) }
+        stop()
+        prepareSession()
+        self.player = player
+        player.play()
+    }
+
+    private func prepareSession() {
         #if os(iOS)
         // Without this the phone's silent switch mutes the reading. If voice control has the
         // microphone open it has already set the session up for both, so leave that alone.
@@ -33,6 +44,13 @@ final class StepSpeaker {
             try? session.setActive(true)
         }
         #endif
+    }
+
+    func say(_ text: String) {
+        guard !text.isEmpty else { return }
+        player?.stop()
+        player = nil
+        prepareSession()
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice
@@ -45,9 +63,11 @@ final class StepSpeaker {
 
     /// True while a step is being read out. Voice commands are ignored meanwhile, because the
     /// microphone hears the speaker and the spoken text contains words like "next" and "done".
-    var isSpeaking: Bool { synthesizer.isSpeaking }
+    var isSpeaking: Bool { synthesizer.isSpeaking || (player?.isPlaying ?? false) }
 
     func stop() {
+        player?.stop()
+        player = nil
         synthesizer.stopSpeaking(at: .immediate)
     }
 }

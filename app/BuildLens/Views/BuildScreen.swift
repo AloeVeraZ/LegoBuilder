@@ -123,6 +123,7 @@ struct BuildScreen: View {
         HStack(spacing: Theme.Spacing.xs) {
             #if os(iOS)
             Button {
+                app.hush()                          // not building any more: stop talking now
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
@@ -186,6 +187,7 @@ struct BuildScreen: View {
         }
         #if os(iOS)
         .onChange(of: mode) { _, newMode in
+            app.hush()                              // changing view stops the talking
             if newMode == .viewer { app.enterViewer() }
         }
         #endif

@@ -27,6 +27,10 @@ for f in "$TMP"/thumbs/*.png; do cp "$f" "$OUT/thumbs/thumb-$(basename "$f")"; d
 for f in "$TMP"/hud/*.png; do cp "$f" "$OUT/hud/hud-$(basename "$f")"; done
 echo "Installed into $OUT ($(ls "$OUT/thumbs" | wc -l | tr -d ' ') thumbnails, $(ls "$OUT/hud" | wc -l | tr -d ' ') glasses frames)"
 
+# What the app says out loud, worded and recorded (recordings come from pipeline/voice-cache;
+# new lines are recorded only if the voice model is installed).
+python3 "$HERE/make_voice.py" "$OUT" | head -1
+
 # Rebuild the Windows / browser version with the new model too.
 if command -v node >/dev/null 2>&1; then
   if [ ! -d "$ROOT/web/node_modules" ]; then (cd "$ROOT/web" && npm install --no-audit --no-fund); fi
