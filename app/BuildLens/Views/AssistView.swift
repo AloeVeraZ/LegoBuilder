@@ -224,9 +224,14 @@ struct MarkerCard: View {
             Button {
                 dismiss()
             } label: {
+                // Dark on the white card, so it can be seen.
                 Image(systemName: "xmark")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: Theme.Size.hitTarget, height: Theme.Size.hitTarget)
+                    .background(Theme.Palette.ink, in: Circle())
             }
-            .buttonStyle(CircleButtonStyle(surface: .muted))
+            .buttonStyle(.plain)
             .padding(Theme.Spacing.md)
             .accessibilityLabel("Close")
         }
