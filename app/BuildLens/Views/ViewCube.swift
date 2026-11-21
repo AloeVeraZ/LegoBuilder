@@ -41,16 +41,13 @@ final class ViewCubeModel {
     var onDrag: ((CGSize, Bool) -> Void)?     // finger movement so far; true on the first call
     /// Look at the model from this direction (in the model's own axes), this way up.
     var onLook: ((SIMD3<Float>, SIMD3<Float>) -> Void)?
-    /// Turn a step in a direction: (1, 0) right, (-1, 0) left, (0, 1) down, (0, -1) up.
-    var onNudge: ((Int, Int) -> Void)?
     var onHome: (() -> Void)?
 }
 
 /// The cube in the corner, as in a CAD program. Drag it to turn the model any way. Tap the
 /// middle of a face to look straight at that side, the strip along an edge to look over
-/// that edge, or a corner to look from that corner. The arrows around it turn the model a
-/// step at a time, and the home button puts everything back. Hold it (or spread two
-/// fingers on it) to make it bigger.
+/// that edge, or a corner to look from that corner. The home button puts everything back.
+/// Hold it (or spread two fingers on it) to make it bigger.
 struct ViewCube: View {
     let model: ViewCubeModel
 
@@ -62,19 +59,11 @@ struct ViewCube: View {
     private var side: CGFloat { expanded ? 196 : 112 }
     /// Beyond this far from a face's middle, a tap means the edge or corner.
     private let rim: CGFloat = 0.6
-    private let arrow: CGFloat = 26
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 0) {
-            ZStack {
-                cube
-                nudge("chevron.compact.up", 0, -1).offset(y: -(side + arrow) / 2 + 6)
-                nudge("chevron.compact.down", 0, 1).offset(y: (side + arrow) / 2 - 6)
-                nudge("chevron.compact.left", -1, 0).offset(x: -(side + arrow) / 2 + 6)
-                nudge("chevron.compact.right", 1, 0).offset(x: (side + arrow) / 2 - 6)
-            }
-            .frame(width: side + arrow * 2 - 12, height: side + arrow * 2 - 12)
-            .animation(.spring(duration: 0.3), value: expanded)
+            cube
+                .animation(.spring(duration: 0.3), value: expanded)
 
             Button {
                 Haptics.tap()
@@ -88,22 +77,6 @@ struct ViewCube: View {
             .animation(.easeOut(duration: 0.2), value: model.turned)
             .accessibilityLabel("Original view")
         }
-    }
-
-    private func nudge(_ symbol: String, _ dx: Int, _ dy: Int) -> some View {
-        Button {
-            Haptics.tap()
-            model.onNudge?(dx, dy)
-        } label: {
-            Image(systemName: symbol)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.white.opacity(0.85))
-                .shadow(color: .black.opacity(0.5), radius: 2)
-                .frame(width: arrow + 8, height: arrow + 8)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(dx > 0 ? "Turn right" : dx < 0 ? "Turn left" : dy > 0 ? "Turn down" : "Turn up")
     }
 
     private var cube: some View {
