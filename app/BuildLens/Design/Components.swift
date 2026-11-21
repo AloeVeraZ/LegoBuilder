@@ -249,8 +249,12 @@ struct BentoTile: View {
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
                 if isAction {
-                    Image(systemName: "arrow.up.right")
-                        .font(Theme.Typography.caption.weight(.bold))
+                    // The same round arrow as the main buttons: this is something to press.
+                    Image(systemName: "arrow.right")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(fill)
+                        .frame(width: Theme.Size.mark, height: Theme.Size.mark)
+                        .background(ink, in: Circle())
                 }
             }
         }
@@ -260,6 +264,34 @@ struct BentoTile: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(fill, in: Theme.shape(Theme.Radius.card))
         .contentShape(Theme.shape(Theme.Radius.card))
+    }
+}
+
+// MARK: - fact
+
+/// A plain fact about the set: a number and what it counts. Deliberately not a card, so
+/// it does not look like something to press.
+struct FactLabel: View {
+    let symbol: String
+    let value: String
+    let label: String
+
+    var body: some View {
+        HStack(spacing: Theme.Spacing.xs) {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.Palette.textTertiary)
+            Text(value)
+                .font(.title3.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(Theme.Palette.textPrimary)
+            Text(label)
+                .font(Theme.Typography.caption.weight(.medium))
+                .foregroundStyle(Theme.Palette.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

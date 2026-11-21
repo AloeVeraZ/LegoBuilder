@@ -186,30 +186,18 @@ struct HomeView: View {
 
     // MARK: bento grid
 
-    /// What is in the box. Not tappable.
+    /// What is in the box: plain text, not cards, so only the two things that can be
+    /// pressed (the instructions tile and the scan button) look like buttons.
     @ViewBuilder private var facts: some View {
         if let model = app.model {
-            HStack(spacing: Theme.Spacing.sm) {
-                BentoTile(
-                    eyebrow: "Pieces",
-                    value: "\(model.pieceCount)",
-                    symbol: "square.stack.3d.up",
-                    caption: "in the box",
-                    fill: Theme.Palette.yellow
-                )
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(model.pieceCount) pieces")
-
-                BentoTile(
-                    eyebrow: "Steps",
-                    value: "\(model.steps.count)",
-                    symbol: "list.number",
-                    caption: "about \(model.estimatedMinutes) min",
-                    fill: Theme.Palette.blue
-                )
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(model.steps.count) steps, about \(model.estimatedMinutes) minutes")
+            HStack(spacing: Theme.Spacing.lg) {
+                FactLabel(symbol: "square.stack.3d.up", value: "\(model.pieceCount)", label: "pieces")
+                FactLabel(symbol: "list.number", value: "\(model.steps.count)", label: "steps")
+                FactLabel(symbol: "clock", value: "\(model.estimatedMinutes)", label: "min")
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, Theme.Spacing.xs)
+            .padding(.vertical, Theme.Spacing.xxs)
         }
     }
 
@@ -226,8 +214,7 @@ struct HomeView: View {
                     value: "Open",
                     symbol: app.glassesConnected ? "eyeglasses" : "cube",
                     caption: app.glassesConnected ? "Shows on your glasses too" : "Step by step in 3D",
-                    fill: app.glassesConnected ? Theme.Palette.green : Theme.Palette.surface,
-                    ink: app.glassesConnected ? Theme.Palette.ink : Theme.Palette.textPrimary,
+                    fill: app.glassesConnected ? Theme.Palette.green : Theme.Palette.yellow,
                     isAction: true
                 )
             }
@@ -241,8 +228,7 @@ struct HomeView: View {
                     value: "Open",
                     symbol: "cube",
                     caption: "Step by step in 3D",
-                    fill: Theme.Palette.surface,
-                    ink: Theme.Palette.textPrimary,
+                    fill: Theme.Palette.yellow,
                     isAction: true
                 )
             }
