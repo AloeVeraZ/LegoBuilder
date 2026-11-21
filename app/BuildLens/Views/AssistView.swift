@@ -35,7 +35,7 @@ struct AssistView: View {
         }
         // In the middle, clear of the step text along the top and bottom.
         .overlay {
-            if tracker.livePose == nil {
+            if tracker.livePose == nil && !app.glassesBuilding {
                 Label(tracker.liveNoCamera ? "No camera" : "Find the phone", systemImage: tracker.liveNoCamera ? "video.slash" : "iphone")
                     .font(.system(.callout, design: .monospaced).weight(.bold))
                     .foregroundStyle(Theme.Palette.hud)
@@ -54,6 +54,19 @@ struct AssistView: View {
         return steps[min(max(step, 0), steps.count - 1)]
     }
 
+    /// Camera from "marker" for a LEGO floating in the middle of the view, as GhostView.inView on
+    /// the glasses: its stand leans back by the shared tilt, and at zoom 1 it is about a third
+    /// of the picture's height across.
+    private func floatingPose(radius: Float, focal: Float, height: Float) -> simd_float4x4 {
+        let r = radius * Self.ghostScale
+        let distance = r * focal / (0.3 * height)
+        let t = Float(app.viewTilt * .pi / 180), c = cos(t), s = sin(t)
+        let up = SIMD3<Float>(0, -c, -s)                  // the model's up, in camera axes
+        let middle = r * 0.4                              // its middle above its ground
+        let at = SIMD3<Float>(0, 0, distance) - up * middle
+        return simd_float4x4(columns: (SIMD4(1, 0, 0, 0), SIMD4(0, -s, c, 0), SIMD4(up, 0), SIMD4(at, 1)))
+    }
+
     private func draw(in context: inout GraphicsContext, size: CGSize, time: Double) {
         let picture = tracker.liveSize
         // The camera picture fills the display; the same mapping places everything drawn on it.
@@ -65,8 +78,14 @@ struct AssistView: View {
             world.draw(Image(decorative: image, scale: 1),
                        in: CGRect(x: origin.x, y: origin.y, width: picture.width * scale, height: picture.height * scale))
         }
-        guard let pose = tracker.livePose, let model = app.model, let step = shownStep else { return }
+        guard let model = app.model, let step = shownStep else { return }
         let ghost = ghosts.ghost(for: step, in: model)
+        let lens = tracker.liveLens
+        // Building: as on the glasses, the LEGO floats in the middle of the view, leaning back
+        // by the shared tilt, turned and zoomed with the phone and glasses. Before that, it
+        // stands on the phone's code where the camera sees it.
+        let floating = app.glassesBuilding
+        guard let pose = floating ? floatingPose(radius: ghost.radius, focal: lens.y, height: Float(picture.height)) : tracker.livePose else { return }
 
         // Model space (+Y up, standing on its own ground) onto the table beside the marker:
         // the model's up is out of the phone's screen.
@@ -74,7 +93,6 @@ struct AssistView: View {
             SIMD4(Self.ghostScale, 0, 0, 0), SIMD4(0, 0, Self.ghostScale, 0), SIMD4(0, -Self.ghostScale, 0, 0), SIMD4(Self.buildOffset, 0, 0, 1)
         )) * Self.turnAndZoom(spin: app.modelSpin, zoom: app.modelZoom)
         let toCamera = pose * onTable
-        let lens = tracker.liveLens
         let fx = CGFloat(lens.x), fy = CGFloat(lens.y), cx = CGFloat(lens.z), cy = CGFloat(lens.w)
         func project(_ p: SIMD3<Float>) -> CGPoint {
             CGPoint(x: origin.x + (CGFloat(p.x / p.z) * fx + cx) * scale, y: origin.y + (CGFloat(p.y / p.z) * fy + cy) * scale)
@@ -85,8 +103,9 @@ struct AssistView: View {
         }
         let green = Theme.Palette.hud
 
-        // Where the build stands: a ring on the table.
+        // Where the build stands: a ring on the table (not while it floats in the view).
         var ring = Path()
+        if !floating {
         for k in 0 ... 48 {
             let a = Float(k) / 48 * 2 * .pi
             let p = inCamera(SIMD3(cos(a), 0, sin(a)) * ghost.radius)
@@ -94,6 +113,7 @@ struct AssistView: View {
             if k == 0 { ring.move(to: project(p)) } else { ring.addLine(to: project(p)) }
         }
         context.stroke(ring, with: .color(green.opacity(0.55)), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+        }
 
         // What is already built, faintly: the real pieces go on top of this.
         if !ghost.built.isEmpty {

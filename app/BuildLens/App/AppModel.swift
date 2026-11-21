@@ -44,6 +44,7 @@ final class AppModel {
 
     /// The finished build is closed (Exit): the glasses go back to their start page too.
     func endBuild() {
+        glassesBuilding = false
         glasses.sendEnd()
         sync.sendEnd()                         // to the Mac, which passes it to its glasses
     }
@@ -52,11 +53,19 @@ final class AppModel {
     /// floats in their view, so it needs no place on the table).
     func markerSkipped() {
         markerRequested = false
+        glassesBuilding = true
         glasses.sendScanSkipped()
         sync.sendScanSkipped()                 // to the Mac, which passes it to its glasses
     }
 
+    /// The glasses are building (the phone's code was scanned, or skipped): the LEGO floats in
+    /// their view, and the Mac's live view shows it the same way, in the middle.
+    private(set) var glassesBuilding = false
+    /// How far the view leans to look from above, as the glasses show it (degrees).
+    var viewTilt: Double { modelTilt ?? 25 }
+
     private func glassesPlaced() {
+        glassesBuilding = true
         #if os(macOS)
         sync.sendPlaced()                      // on to the phone
         #else
@@ -295,8 +304,8 @@ final class AppModel {
             #endif
             sync.onPlaced = { [weak self] in self?.glassesPlaced() }
             #if os(macOS)
-            sync.onScanSkipped = { [weak self] in self?.glasses.sendScanSkipped() }
-            sync.onEnd = { [weak self] in self?.glasses.sendEnd() }
+            sync.onScanSkipped = { [weak self] in self?.glassesBuilding = true; self?.glasses.sendScanSkipped() }
+            sync.onEnd = { [weak self] in self?.glassesBuilding = false; self?.glasses.sendEnd() }
             #endif
             glasses.onPlaced = { [weak self] in self?.glassesPlaced() }
             glasses.onSettings = { [weak self] fade, voice, aloud in self?.settingsFromGlasses(fade: fade, voice: voice, aloud: aloud) }
