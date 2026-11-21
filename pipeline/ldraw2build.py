@@ -166,7 +166,10 @@ def model_description(sf: SourceFile) -> str:
 
 
 class Library:
-    SEARCH_PREFIXES = ("", "parts/", "p/", "models/", "unofficial/parts/", "unofficial/p/")
+    # p/48/ first: the high-resolution versions of round primitives (48 sides instead of 16),
+    # so wheels, pins and holes come out smooth. Every 16-side vertex is also a 48-side
+    # vertex, so they still meet the flat faces around them.
+    SEARCH_PREFIXES = ("", "parts/", "p/48/", "p/", "models/", "unofficial/parts/", "unofficial/p/48/", "unofficial/p/")
 
     def __init__(self, roots):
         self.embedded = {}

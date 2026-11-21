@@ -15,7 +15,7 @@ final class BuildScene {
     let root: ModelEntity
     private let turntable: Entity       // spins around the model's vertical axis
     private let content: Entity
-    private var arrows: [Entity] = []   // one bouncing arrow per new piece (up to 8)
+    private var arrows: [Entity] = []   // arrows showing how the new pieces go in (up to 8)
     private var entities: [ModelEntity] = []
     private var meshes: [Int: MeshResource] = [:]
     private var materialCache: [String: RealityKit.Material] = [:]
@@ -95,8 +95,9 @@ final class BuildScene {
             entity.isEnabled = true
         }
         frame(assembly: info.assembly)
-        if animated { animateIn(info.added, step: info, local: local) }
-        placeArrow(over: info.added, local: local)
+        let moves = insertionMoves(for: info, local: local)
+        if animated { animateIn(moves, local: local) }
+        placeArrows(for: moves, local: local)
     }
 
     /// The whole finished model, every piece in its final place.
@@ -153,46 +154,102 @@ final class BuildScene {
         return (lo + hi) / 2
     }
 
-    /// New pieces fly in from outside the model (from above for pieces on top,
-    /// from the side for wheels and side panels, from below for pieces underneath).
-    private func animateIn(_ ids: [Int], step: BuildModel.StepInfo, local: simd_float4x4) {
+    // MARK: how pieces arrive
+
+    /// The way printed instructions show a piece going on: pins and axles slide in along
+    /// their shaft, wheels push onto their axle, a finished sub-build is lowered on as one
+    /// unit, and other pieces come from outside the model.
+    private struct Move {
+        let piece: Int
+        let direction: SIMD3<Float>     // unit vector, from the final position out to where it starts
+        let distance: Float
+        let delay: Double
+        let group: Int                  // pieces with the same group share one arrow
+    }
+
+    private enum PieceKind { case shaft, wheel, block }
+
+    private func kind(of i: Int) -> PieceKind {
+        let name = model.package.parts[model.package.instances[i].part].name.lowercased()
+        if name.contains("wheel") || name.contains("tyre") || name.contains("tire") { return .wheel }
+        let housings = ["connector", "block", "beam", "panel", "brick", "plate", "liftarm", "frame"]
+        let shaft = (name.contains("pin") || name.contains("axle")) && !housings.contains(where: name.contains)
+        return shaft ? .shaft : .block
+    }
+
+    /// Pieces that were put together in a sub-build step; when they show up again in the
+    /// main model they arrive as one unit.
+    private lazy var subBuilt: Set<Int> = Set(model.steps.filter(\.isSubAssembly).flatMap(\.added))
+
+    private func insertionMoves(for step: BuildModel.StepInfo, local: simd_float4x4) -> [Move] {
+        let ids = step.added
         let newIDs = Set(ids)
         let before = step.visible.filter { !newIDs.contains($0) }
         var centreBefore = SIMD3<Float>.zero
         if !before.isEmpty {
             centreBefore = before.reduce(SIMD3<Float>.zero) { $0 + pieceCentre($1, local) } / Float(before.count)
         }
-        let distance = max(framingRadius * 0.7, 0.03)
-        let current = token
-        for (n, i) in ids.enumerated() {
-            let entity = entities[i]
-            let endTransform = Transform(matrix: local * model.instanceMatrices[i])
-            var dir = SIMD3<Float>(0, 1, 0)
-            if !before.isEmpty {
-                let d = pieceCentre(i, local) - centreBefore
-                if simd_length(d) > 1e-5 {
-                    let u = simd_normalize(d)
-                    dir = u.y < -0.6 ? SIMD3(0, -1, 0) : simd_normalize(SIMD3(u.x, max(u.y, 0) + 0.6, u.z))
+        let far = max(framingRadius * 0.7, 0.03)
+        let up = SIMD3<Float>(0, 1, 0)
+
+        // A sub-build being attached: everything comes down together.
+        if !step.isSubAssembly, ids.count > 1, ids.contains(where: subBuilt.contains) {
+            return ids.map { Move(piece: $0, direction: up, distance: far, delay: 0.15, group: 0) }
+        }
+
+        var moves: [Move] = []
+        var order = 0
+        // Housings first, then the pins and axles that go into them.
+        for pass in [PieceKind.block, .wheel, .shaft] {
+            for i in ids where kind(of: i) == pass {
+                let m = local * model.instanceMatrices[i]
+                let away = pieceCentre(i, local) - centreBefore
+                var direction = up
+                var distance = far
+                switch pass {
+                case .shaft, .wheel:
+                    let column = pass == .shaft ? m.columns.0 : m.columns.2
+                    var axis = simd_normalize(SIMD3(column.x, column.y, column.z))
+                    let side = before.isEmpty ? simd_dot(axis, up) : simd_dot(axis, away)
+                    if side < 0 || (abs(side) < 1e-4 && axis.y < 0) { axis = -axis }
+                    direction = axis
+                    distance = far * 0.8
+                case .block:
+                    if !before.isEmpty, simd_length(away) > 1e-5 {
+                        let u = simd_normalize(away)
+                        direction = u.y < -0.6 ? -up : simd_normalize(SIMD3(u.x * 0.5, max(u.y, 0) + 0.8, u.z * 0.5))
+                    }
                 }
+                moves.append(Move(piece: i, direction: direction, distance: distance,
+                                  delay: 0.12 + Double(min(order, 10)) * 0.14, group: moves.count + 1))
+                order += 1
             }
+        }
+        return moves
+    }
+
+    private func animateIn(_ moves: [Move], local: simd_float4x4) {
+        let current = token
+        for move in moves {
+            let entity = entities[move.piece]
+            let endTransform = Transform(matrix: local * model.instanceMatrices[move.piece])
             var start = endTransform
-            start.translation += dir * distance
+            start.translation += move.direction * move.distance
             entity.transform = start
-            let delay = 0.12 + Double(min(n, 12)) * 0.07
             Task { @MainActor [weak self, weak entity] in
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: UInt64(move.delay * 1_000_000_000))
                 guard let self, let entity, self.token == current else { return }
-                _ = entity.move(to: endTransform, relativeTo: entity.parent, duration: 0.55, timingFunction: .easeOut)
+                _ = entity.move(to: endTransform, relativeTo: entity.parent, duration: 0.7, timingFunction: .easeInOut)
             }
         }
     }
 
     private func buildArrows() {
-        let material = UnlitMaterial(color: PlatformColor(red: 1.0, green: 0.78, blue: 0.0, alpha: 1))
+        let material = UnlitMaterial(color: PlatformColor(red: 0.86, green: 0.12, blue: 0.15, alpha: 1))
         let coneMesh = MeshResource.generateCone(height: 0.6, radius: 0.32)
         let shaftMesh = MeshResource.generateCylinder(height: 0.7, radius: 0.11)
         for _ in 0 ..< 8 {
-            // Unit-sized arrow pointing down (-Y) with its tip at the entity origin.
+            // Unit-sized arrow with its tip at the entity origin and its tail along +Y.
             let arrow = Entity()
             let cone = ModelEntity(mesh: coneMesh, materials: [material])
             cone.orientation = simd_quatf(angle: .pi, axis: [1, 0, 0])
@@ -207,27 +264,39 @@ final class BuildScene {
         }
     }
 
-    /// Puts a bouncing arrow above each new piece (pieces in the same spot share one).
-    private func placeArrow(over ids: [Int], local: simd_float4x4) {
+    /// Puts an arrow beside each new piece (or one over a sub-build), pointing the way it goes in.
+    private func placeArrows(for moves: [Move], local: simd_float4x4) {
         let size = max(framingRadius * 0.09, 0.004)
-        var spots: [SIMD3<Float>] = []
-        for i in ids {
-            let (lo, hi) = pieceBounds(i, local)
-            let tip = SIMD3<Float>((lo.x + hi.x) / 2, hi.y + size * 0.4, (lo.z + hi.z) / 2)
-            if !spots.contains(where: { simd_distance($0, tip) < size * 1.5 }) { spots.append(tip) }
+        var spots: [(tip: SIMD3<Float>, direction: SIMD3<Float>)] = []
+        for (_, members) in Dictionary(grouping: moves, by: \.group).sorted(by: { $0.key < $1.key }) {
+            guard let direction = members.first?.direction else { continue }
+            var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            for move in members {
+                let (plo, phi) = pieceBounds(move.piece, local)
+                lo = pointwiseMin(lo, plo)
+                hi = pointwiseMax(hi, phi)
+            }
+            let reach = simd_dot(simd_abs(direction), (hi - lo) / 2)
+            let tip = (lo + hi) / 2 + direction * (reach + size * 0.4)
+            if !spots.contains(where: { simd_distance($0.tip, tip) < size * 1.5 }) { spots.append((tip, direction)) }
         }
         for (k, arrow) in arrows.enumerated() {
             arrow.stopAllAnimations()
             guard k < spots.count else { arrow.isEnabled = false; continue }
-            let base = Transform(scale: SIMD3(repeating: size), rotation: simd_quatf(angle: 0, axis: [0, 1, 0]), translation: spots[k])
+            let direction = spots[k].direction
+            let rotation = direction.y < -0.999
+                ? simd_quatf(angle: .pi, axis: [1, 0, 0])
+                : simd_quatf(from: [0, 1, 0], to: direction)
+            let base = Transform(scale: SIMD3(repeating: size), rotation: rotation, translation: spots[k].tip)
             arrow.transform = base
             arrow.isEnabled = true
-            var up = base
-            up.translation += SIMD3(0, size * 0.6, 0)
+            var out = base
+            out.translation += direction * size * 0.6
             let bob = FromToByAnimation<Transform>(
                 name: "bob",
                 from: base,
-                to: up,
+                to: out,
                 duration: 0.55,
                 timing: .easeInOut,
                 isAdditive: false,
