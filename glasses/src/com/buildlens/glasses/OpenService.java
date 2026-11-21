@@ -12,8 +12,19 @@ import android.view.accessibility.AccessibilityEvent;
  * (the method MicroLumin's glasses app template uses). It reads nothing on screen.
  */
 public class OpenService extends AccessibilityService {
+    /** While connected: screens are opened from here, which the glasses allow from the
+     *  background (a plain service may be stopped from opening one while unplugged). */
+    static volatile OpenService instance;
+
+    @Override
+    public void onDestroy() {
+        instance = null;
+        super.onDestroy();
+    }
+
     @Override
     protected void onServiceConnected() {
+        instance = this;
         Log.i(LinkService.TAG, "open service: starting the link");
         LinkService.start(this);
     }

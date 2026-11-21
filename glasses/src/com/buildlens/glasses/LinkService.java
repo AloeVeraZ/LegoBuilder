@@ -391,8 +391,16 @@ public class LinkService extends Service {
         if (l != null) {
             l.onRemoteStep(replay);
         } else {
-            startActivity(new Intent(this, MainActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            // From the accessibility service when it is on (as MicroLumin's template opens its
+            // app): the glasses let it open a screen from the background.
+            Context from = OpenService.instance != null ? OpenService.instance : this;
+            Log.i(TAG, "opening the screen (" + (from == this ? "link" : "open service") + ")");
+            try {
+                from.startActivity(new Intent(this, MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            } catch (Exception e) {
+                Log.w(TAG, "open screen: " + e);
+            }
         }
     }
 
