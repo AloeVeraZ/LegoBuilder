@@ -33,6 +33,7 @@ final class AppModel {
     }
     private(set) var milestone: Milestone?
     private var milestoneTask: Task<Void, Never>?
+    private var isLoading = false
     private var finishTask: Task<Void, Never>?
 
     /// What the current step is part of: the main build, or a sub-build made on the side.
@@ -75,7 +76,10 @@ final class AppModel {
     // MARK: loading
 
     func load() async {
-        guard model == nil, loadError == nil else { return }
+        // More than one window can ask; only the first does the work.
+        guard model == nil, loadError == nil, !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
         do {
             let model = try BuildModel.loadBundled()
             let scene = BuildScene(model: model)
@@ -116,7 +120,12 @@ final class AppModel {
                 guard let self, !self.glasses.instructionsOpen, !finished, index > 0 else { return }
                 self.remember(step: index)
             }
+            // Only the phone drives the glasses. The Mac app is for showing the build on a
+            // big screen; it follows the phone, and its Glasses preview window shows what the
+            // glasses show.
+            #if os(iOS)
             glasses.start()
+            #endif
             voice.onCommand = { [weak self] command in self?.handle(command) }
         } catch {
             loadError = error.localizedDescription

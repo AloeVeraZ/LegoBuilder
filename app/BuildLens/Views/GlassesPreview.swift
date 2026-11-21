@@ -5,6 +5,44 @@ import SwiftUI
 /// Until we have the glasses, this runs on the phone (sheet) or the Mac (separate window).
 struct GlassesPreview: View {
     @Environment(AppModel.self) private var app
+    /// Which picture is up right now.
+    @State private var frame = (step: 0, variant: "")
+    /// The step the display last settled on, to know when we moved forward by one.
+    @State private var settledStep = -1
+
+    private struct Playing: Hashable {
+        let step: Int
+        let finished: Bool
+    }
+
+    /// The same timing as the glasses app (glasses/.../MainActivity.java).
+    private func play() async {
+        let step = app.step
+        let pause = { (seconds: Double) in try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+        if app.showingFinished {
+            frame = (step, "-a")
+            await pause(0.22)
+            guard !Task.isCancelled else { return }
+            frame = (step, "-b")
+            settledStep = -1
+            return
+        }
+        if settledStep >= 0, step == settledStep + 1 {
+            frame = (settledStep, "-a")
+            await pause(0.11)
+            guard !Task.isCancelled else { return }
+            frame = (settledStep, "-b")
+            await pause(0.32)
+            guard !Task.isCancelled else { return }
+        }
+        settledStep = step
+        var pressed = false
+        while !Task.isCancelled {
+            frame = (step, pressed ? "-w" : "")
+            pressed.toggle()
+            await pause(0.45)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
@@ -19,11 +57,14 @@ struct GlassesPreview: View {
                         .foregroundStyle(Theme.Palette.textSecondary)
                 }
                 Spacer(minLength: Theme.Spacing.xs)
+                // Only the phone links to the glasses; on the Mac this window is the stand-in.
+                #if os(iOS)
                 StatusChip(
                     symbol: "eyeglasses",
                     text: app.glassesConnected ? "Linked" : "Not linked",
                     tint: app.glassesConnected ? Theme.Palette.green : Theme.Palette.textSecondary
                 )
+                #endif
             }
 
             display
@@ -44,8 +85,8 @@ struct GlassesPreview: View {
     private var display: some View {
         ZStack {
             Color.black
-            if let model = app.model, let url = model.glassesFrameURL(step: app.step),
-               let image = ImageCache.shared.image(at: url), !app.showingFinished {
+            if let model = app.model, let url = model.glassesFrameURL(step: frame.step, variant: frame.variant),
+               let image = ImageCache.shared.image(at: url) {
                 Image(platformImage: image)
                     .resizable()
                     .scaledToFit()
@@ -58,6 +99,9 @@ struct GlassesPreview: View {
             }
         }
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
+        // Restarts whenever the step (or finished state) changes, and plays what the real
+        // glasses play: the last piece slots in, then the new one waits with a bouncing arrow.
+        .task(id: Playing(step: app.step, finished: app.showingFinished)) { await play() }
         .clipShape(Theme.shape(Theme.Radius.tile))
         .overlay {
             Theme.shape(Theme.Radius.tile)
@@ -78,11 +122,16 @@ struct GlassesPreview: View {
                 Text("STEP \(app.step + 1)/\(app.stepCount)")
                     .font(hudFont(36, weight: .bold, scale: scale))
                 if let step = app.currentStep {
-                    if step.isSubAssembly {
-                        Text("SUB: \(step.assembly.name.uppercased())\(step.assembly.uses > 1 ? " ×\(step.assembly.uses)" : "")")
-                            .font(hudFont(22, weight: .semibold, scale: scale))
-                    }
+                    Text(step.isSubAssembly
+                         ? "SUB: \(step.assembly.name.uppercased())\(step.assembly.uses > 1 ? " ×\(step.assembly.uses)" : "")"
+                         : "MAIN BUILD")
+                        .font(hudFont(22, weight: .semibold, scale: scale))
                     Spacer(minLength: 0)
+                    ForEach(step.attaches, id: \.id) { sub in
+                        Text("ATTACH \(sub.uses > 1 ? "\(sub.uses)x" : "THE") \(sub.name.uppercased())")
+                            .font(hudFont(22, scale: scale))
+                            .lineLimit(1)
+                    }
                     ForEach(step.parts.prefix(4)) { line in
                         Text("+\(line.count) \(line.colourName.uppercased()) \(line.name.uppercased())")
                             .font(hudFont(22, scale: scale))

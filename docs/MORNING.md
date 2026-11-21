@@ -22,7 +22,18 @@ Claude "do the next step" and it will run the commands.
    this the phone cannot find the glasses. (If you tapped Don't Allow: Settings › BuildLens ›
    Local Network.)
 
-Or, after step 3, tell Claude "install BuildLens on my iPhone" and it does 4–7.
+Or, after step 3, run `app/install-iphone.sh` (or tell Claude "install BuildLens on my
+iPhone"): it finds the phone, signs the app with your Apple ID, installs it and opens it,
+and tells you exactly what is missing if it can't.
+
+## The Mac app, for showing the judges
+
+BuildLens is also installed on this Mac: open **BuildLens** from the Desktop shortcut,
+Launchpad or Spotlight. The big **Open** tile starts the instructions; **Glasses preview**
+opens a separate window that shows what the glasses show and follows the step you are on.
+The Mac does not link to the glasses (only the phone does), but it does follow the phone's
+step when both are on the same Wi-Fi. After changing the app, `app/install-mac.sh` updates
+the installed copy.
 
 ## 2. Put BuildLens on the glasses (about 5 minutes)
 
@@ -90,8 +101,8 @@ If the tile only says **Instructions · Open**, the phone has not found the glas
   them (type `n`, `r`, `b` + Enter for one, two, three clicks) to show the two-way sync.
   Do not leave it running when the real glasses are around: the phone links to whichever
   it finds first.
-- **No iPhone:** press ▶ in Xcode with **My Mac** as the destination; the Mac app is the same
-  app. `web/dist/BuildLens.html` opens in any browser (older animation, no glasses link).
+- **No iPhone:** use the Mac app (above). `web/dist/BuildLens.html` opens in any browser
+  (older animation, no glasses link).
 
 ## What is and is not verified
 

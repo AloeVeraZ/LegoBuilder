@@ -657,6 +657,7 @@ def main():
     ap.add_argument("--set-id", default="")
     ap.add_argument("--set-name", default="")
     ap.add_argument("--theme", default="")
+    ap.add_argument("--pieces", type=int, help="piece count to show for the set (what the box says), if it differs from the model")
     ap.add_argument("--names", help="JSON file mapping part numbers to display names (e.g. the set's official parts list)")
     args = ap.parse_args()
 
@@ -786,7 +787,7 @@ def main():
 
     out = {
         "format": "buildlens.build/1",
-        "set": {"id": args.set_id, "name": title, "theme": args.theme, "pieces": len(sb.instances)},
+        "set": {"id": args.set_id, "name": title, "theme": args.theme, "pieces": args.pieces or len(sb.instances)},
         "source": {"file": os.path.basename(args.model),
                    "generated": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
                    "missingFiles": sorted(lib.missing)},

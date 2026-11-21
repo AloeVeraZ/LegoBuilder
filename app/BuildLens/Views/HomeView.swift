@@ -234,18 +234,19 @@ struct HomeView: View {
             .accessibilityLabel(app.glassesConnected ? "Open instructions on phone and glasses" : "Open instructions")
             #else
             Button {
-                openWindow(id: "glasses")
+                path.append(.viewer)
             } label: {
                 BentoTile(
-                    eyebrow: "Glasses",
-                    value: app.glassesConnected ? "Linked" : "Preview",
-                    symbol: "eyeglasses",
-                    caption: app.glassesConnected ? "Showing your step" : "See the display",
-                    fill: Theme.Palette.green,
+                    eyebrow: "Instructions",
+                    value: "Open",
+                    symbol: "cube",
+                    caption: "Step by step in 3D",
+                    fill: Theme.Palette.surface,
+                    ink: Theme.Palette.textPrimary,
                     isAction: true
                 )
             }
-            .accessibilityLabel("Glasses preview window")
+            .accessibilityLabel("Open instructions")
             #endif
         }
         .buttonStyle(CardButtonStyle())
@@ -263,12 +264,14 @@ struct HomeView: View {
         }
         .buttonStyle(PillButtonStyle(kind: .primary, height: Theme.Size.cta))
         #else
+        // On the Mac the instructions are the big tile; this is the small extra.
         Button {
-            path.append(.viewer)
+            openWindow(id: "glasses")
         } label: {
-            PillLabel(title: "Open 3D instructions", systemImage: "cube")
+            PillLabel(title: "Glasses preview", systemImage: "eyeglasses")
         }
-        .buttonStyle(PillButtonStyle(kind: .primary, height: Theme.Size.cta))
+        .buttonStyle(PillButtonStyle(kind: .secondary, height: Theme.Size.cta))
+        .accessibilityLabel("Glasses preview window")
         #endif
     }
 }

@@ -251,8 +251,10 @@ final class BuildModel {
         Self.resource("thumb-\(part)-\(colour)", "png", in: bundle)
     }
 
-    func glassesFrameURL(step: Int) -> URL? {
-        Self.resource(String(format: "hud-step-%03d", step + 1), "png", in: bundle)
+    /// The glasses frames of a step: the piece waiting with its arrow (""), the arrow at the
+    /// bottom of its bounce ("-w"), part-way in ("-a") and seated ("-b").
+    func glassesFrameURL(step: Int, variant: String = "") -> URL? {
+        Self.resource(String(format: "hud-step-%03d", step + 1) + variant, "png", in: bundle)
     }
 
     var heroImageURL: URL? { Self.resource("build-hero", "png", in: bundle) }
