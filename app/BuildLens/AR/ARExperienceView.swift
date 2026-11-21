@@ -163,8 +163,9 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
         let camera = view.cameraTransform
         let forward = camera.rotation.act(SIMD3<Float>(0, 0, -1))
-        var position = camera.translation + forward * 0.45
-        position.y -= 0.15
+        // Far enough away for the enlarged model to fit in view.
+        var position = camera.translation + forward * 0.9
+        position.y -= 0.3
         place(at: position, found: found)
     }
 
