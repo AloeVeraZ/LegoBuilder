@@ -42,6 +42,9 @@ final class GlassesLink {
         }
         browser.start(queue: .main)
         self.browser = browser
+        #if os(iOS)
+        startBluetooth()
+        #endif
     }
 
     /// Remembers the step the glasses are already on (they just told us), without sending it
@@ -56,19 +59,15 @@ final class GlassesLink {
     /// `milestone`: the step is done and the "good job" moment is on; the next step follows.
     /// The phone's settings, for the glasses: fade the pieces already built, the voice.
     func sendSettings(fade: Bool, voice: String, aloud: Bool) {
-        guard let connection, connection.state == .ready else { return }
-        let line = "{\"fade\":\(fade),\"voice\":\"\(voice)\",\"aloud\":\(aloud)}\n"
-        connection.send(content: Data(line.utf8), completion: .contentProcessed { _ in })
+        write("{\"fade\":\(fade),\"voice\":\"\(voice)\",\"aloud\":\(aloud)}\n")
     }
 
     /// The model's turn and zoom here, for the glasses to show the same.
     func sendView(spin: Double, zoom: Double?, tilt: Double?) {
-        guard let connection, connection.state == .ready else { return }
         var line = String(format: "{\"spin\":%.1f", spin)
         if let zoom { line += String(format: ",\"zoom\":%.3f", zoom) }
         if let tilt { line += String(format: ",\"tilt\":%.1f", tilt) }
-        line += "}\n"
-        connection.send(content: Data(line.utf8), completion: .contentProcessed { _ in })
+        write(line + "}\n")
     }
 
     /// A setting was changed on the glasses' menu: (fade, voice prefix, read aloud).
@@ -82,20 +81,69 @@ final class GlassesLink {
 
     /// The set's box was scanned here: the glasses need not scan it themselves.
     func sendBoxScanned() {
-        guard let connection, connection.state == .ready else { return }
-        connection.send(content: Data("{\"box\":true}\n".utf8), completion: .contentProcessed { _ in })
+        write("{\"box\":true}\n")
     }
 
     func send(step: Int, finished: Bool, replay: Bool = false, view: Int? = nil, milestone: Bool = false) {
         last = (step, finished)
-        guard let connection, connection.state == .ready else { return }
         var line = "{\"step\":\(step),\"finished\":\(finished)"
         if replay { line += ",\"replay\":true" }
         if let view { line += ",\"view\":\(view)" }
         if milestone { line += ",\"milestone\":true" }
         if instructionsOpen { line += ",\"open\":true" }
-        line += "}\n"
-        connection.send(content: Data(line.utf8), completion: .contentProcessed { _ in })
+        write(line + "}\n")
+    }
+
+    /// One line to the glasses: over Wi-Fi or USB when that link is up, else over Bluetooth.
+    private func write(_ line: String) {
+        if let connection, connection.state == .ready, greeted {
+            connection.send(content: Data(line.utf8), completion: .contentProcessed { _ in })
+            return
+        }
+        #if os(iOS)
+        if ble.ready { ble.send(Data(line.utf8)) }
+        #endif
+    }
+
+    #if os(iOS)
+    /// The glasses over Bluetooth, with no Wi-Fi or Mac (GlassesBLE).
+    private let ble = GlassesBLE()
+    private var bleBuffer = Data()
+    private var bleGreeted = false
+
+    private func startBluetooth() {
+        ble.onData = { [weak self] data in
+            guard let self else { return }
+            self.bleBuffer.append(data)
+            if self.bleBuffer.count > 256 * 1024 { self.bleBuffer.removeAll() }
+            self.drainLines(&self.bleBuffer, overBluetooth: true)
+        }
+        ble.onReady = { [weak self] ready in
+            guard let self else { return }
+            if ready {
+                // Opening BuildLens on the phone brings it up on the glasses too.
+                self.ble.send(Data("{\"wake\":true}\n".utf8))
+                if self.instructionsOpen, let last = self.last { self.send(step: last.step, finished: last.finished) }
+            } else {
+                self.bleBuffer.removeAll()
+                if self.bleGreeted { self.bleGreeted = false; self.linkChanged() }
+            }
+        }
+        ble.start()
+    }
+    #endif
+
+    /// Linked by any route: reported once when the first comes up and once when the last goes.
+    private var reportedLinked = false
+    private func linkChanged() {
+        #if os(iOS)
+        let now = greeted || bleGreeted
+        #else
+        let now = greeted
+        #endif
+        guard now != reportedLinked else { return }
+        reportedLinked = now
+        onConnectionChange?(now)
     }
 
     #if os(macOS)
@@ -154,7 +202,7 @@ final class GlassesLink {
                 guard let self else { return }
                 if let data, !data.isEmpty {
                     self.buffer.append(data)
-                    self.drainLines()
+                    self.drainLines(&self.buffer, overBluetooth: false)
                 }
                 if isComplete || error != nil {
                     self.dropConnection()
@@ -181,12 +229,17 @@ final class GlassesLink {
         let aloud: Bool?
     }
 
-    private func drainLines() {
+    private func drainLines(_ buffer: inout Data, overBluetooth: Bool) {
         while let newline = buffer.firstIndex(of: 0x0A) {
             let line = buffer[buffer.startIndex ..< newline]
             buffer.removeSubrange(buffer.startIndex ... newline)
             if let message = try? JSONDecoder().decode(Message.self, from: Data(line)) {
-                if !greeted { greeted = true; onConnectionChange?(true) }
+                #if os(iOS)
+                if overBluetooth { if !bleGreeted { bleGreeted = true; linkChanged() } }
+                else if !greeted { greeted = true; linkChanged() }
+                #else
+                if !greeted { greeted = true; linkChanged() }
+                #endif
                 if let spin = message.spin {
                     onRemoteView?(spin, message.zoom, message.tilt)
                     continue
@@ -214,7 +267,7 @@ final class GlassesLink {
         connection?.cancel()
         connection = nil
         buffer.removeAll()
-        if greeted { greeted = false; onConnectionChange?(false) }
+        if greeted { greeted = false; linkChanged() }
         // Try again shortly (the glasses app may have restarted).
         guard !retryScheduled else { return }
         retryScheduled = true

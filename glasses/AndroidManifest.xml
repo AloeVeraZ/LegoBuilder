@@ -12,6 +12,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- The ghost: the camera looks for the marker on the phone. Without a camera the app works as before. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- The phone link over Bluetooth Low Energy (no Wi-Fi or cable needed). -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
     <application

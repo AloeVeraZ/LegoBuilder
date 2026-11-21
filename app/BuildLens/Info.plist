@@ -8,6 +8,8 @@
 		<string>_buildlens-sync._udp</string>
 		<string>_buildlens-glass._tcp</string>
 	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>BuildLens links to your glasses over Bluetooth, so they show the same step.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

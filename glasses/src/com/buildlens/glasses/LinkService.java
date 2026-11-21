@@ -91,7 +91,7 @@ public class LinkService extends Service {
 
     static boolean phoneLinked() {
         LinkService s = instance;
-        return s != null && !s.clients.isEmpty();
+        return s != null && (!s.clients.isEmpty() || (s.ble != null && s.ble.linked()));
     }
 
     /** True while the glasses are scanning for the phone's code: every message then asks the
@@ -103,7 +103,7 @@ public class LinkService extends Service {
         LinkService s = instance;
         if (s == null) return;
         String m = "{\"step\":" + step + ",\"finished\":" + finished + ",\"placed\":true,\"hello\":true}\n";
-        for (java.net.Socket c : s.clients) s.sendTo(c, m);
+        s.toAll(m);
     }
 
     /** A setting was changed on the glasses: the phone (through the Mac) changes it too. */
@@ -112,7 +112,7 @@ public class LinkService extends Service {
         if (s == null) return;
         String m = "{\"step\":" + step + ",\"finished\":" + finished + ",\"fade\":" + fade + ",\"voice\":\"" + voice
                 + "\",\"aloud\":" + aloud + ",\"hello\":true}\n";
-        for (java.net.Socket c : s.clients) s.sendTo(c, m);
+        s.toAll(m);
     }
 
     /** Tells the phone and Mac how the model is turned and zoomed here. */
@@ -121,7 +121,7 @@ public class LinkService extends Service {
         if (s == null) return;
         String m = String.format(java.util.Locale.US, "{\"step\":%d,\"finished\":%b,\"spin\":%.1f,\"zoom\":%.3f,\"tilt\":%.1f}\n",
                 step, finished, spin, zoom, tilt);
-        for (java.net.Socket c : s.clients) s.sendTo(c, m);
+        s.toAll(m);
     }
 
     /** Tells the phone and Mac the set's box is done (so their own box scan moves on). */
@@ -129,7 +129,7 @@ public class LinkService extends Service {
         LinkService s = instance;
         if (s == null) return;
         String m = "{\"step\":" + step + ",\"finished\":" + finished + ",\"box\":true,\"hello\":true}\n";
-        for (java.net.Socket c : s.clients) s.sendTo(c, m);
+        s.toAll(m);
     }
 
     /** Starts or stops asking the phone to show its code (Table marker). */
@@ -150,6 +150,7 @@ public class LinkService extends Service {
         instance = this;
         startForeground(1, notification());
         startServer();
+        startBluetooth();
     }
 
     @Override
@@ -242,42 +243,7 @@ public class LinkService extends Service {
     private void readLoop(Socket s) {
         try (BufferedReader r = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
-            while ((line = r.readLine()) != null) {
-                JSONObject msg = new JSONObject(line);
-                if (msg.optBoolean("box", false)) {
-                    main.post(() -> { Listener l = listener; if (l != null) l.onBoxScanned(); else boxWaiting = true; });
-                }
-                if (msg.has("fade")) {
-                    final boolean fade = msg.optBoolean("fade", false);
-                    final String voice = msg.optString("voice", "");
-                    final boolean aloud = msg.optBoolean("aloud", false);
-                    settingsFade = fade; settingsVoice = voice; settingsAloud = aloud; haveSettings = true;
-                    main.post(() -> { Listener l = listener; if (l != null) l.onSettings(fade, voice, aloud); });
-                    if (!msg.has("step")) continue;
-                }
-                if (msg.has("spin")) {
-                    final float spin = (float) msg.optDouble("spin", 0), zoom = (float) msg.optDouble("zoom", -1);
-                    final float tilt = (float) msg.optDouble("tilt", Double.NaN);
-                    main.post(() -> { Listener l = listener; if (l != null) l.onRemoteView(spin, zoom, tilt); });
-                    continue;
-                }
-                if (!msg.has("step")) continue;
-                final int n = msg.getInt("step");
-                final boolean done = msg.optBoolean("finished", false);
-                final boolean replay = msg.optBoolean("replay", false);
-                // "open": the instructions are on screen on the phone, so ours should be too.
-                final boolean open = msg.optBoolean("open", false);
-                final int side = msg.optInt("view", -1);
-                final boolean celebrate = msg.optBoolean("milestone", false);
-                main.post(() -> {
-                    boolean changed = n != step || done != finished || side != view || celebrate != milestone;
-                    step = n;
-                    finished = done;
-                    view = side;
-                    milestone = celebrate;
-                    if (changed || replay || (open && listener == null)) deliver(replay);
-                });
-            }
+            while ((line = r.readLine()) != null) handle(line);
         } catch (Exception e) {
             Log.i(TAG, "client gone: " + e);
         } finally {
@@ -286,6 +252,71 @@ public class LinkService extends Service {
             if (clients.isEmpty()) holdMulticast(true);
             notifyLink();
         }
+    }
+
+    // ------------------------------------------------------------ Bluetooth
+    private volatile BleLink ble;
+
+    private void startBluetooth() {
+        main.post(() -> {
+            ble = new BleLink(this, new BleLink.Lines() {
+                @Override public void onLine(String line) {
+                    try { handle(line); } catch (Exception e) { Log.w(TAG, "bluetooth line: " + e); }
+                }
+                @Override public void onPhoneChanged() { notifyLink(); }
+                @Override public void onPhoneReady(android.bluetooth.BluetoothDevice phone) {
+                    // The same greeting as over TCP.
+                    String hello = "{\"step\":" + step + ",\"finished\":" + finished + ",\"hello\":true"
+                            + (scanning ? ",\"scan\":true" : "") + "}\n";
+                    BleLink b = ble;
+                    if (b != null) sender.execute(() -> b.send(hello));
+                }
+            });
+            ble.start();
+        });
+    }
+
+    /** One line from the phone or Mac, by any link. */
+    private void handle(String line) throws Exception {
+        JSONObject msg = new JSONObject(line);
+        // "wake": the phone app has just linked; bring BuildLens up on the glasses.
+        if (msg.optBoolean("wake", false)) {
+            main.post(() -> { if (listener == null) deliver(false); });
+            if (!msg.has("step")) return;
+        }
+        if (msg.optBoolean("box", false)) {
+            main.post(() -> { Listener l = listener; if (l != null) l.onBoxScanned(); else boxWaiting = true; });
+        }
+        if (msg.has("fade")) {
+            final boolean fade = msg.optBoolean("fade", false);
+            final String voice = msg.optString("voice", "");
+            final boolean aloud = msg.optBoolean("aloud", false);
+            settingsFade = fade; settingsVoice = voice; settingsAloud = aloud; haveSettings = true;
+            main.post(() -> { Listener l = listener; if (l != null) l.onSettings(fade, voice, aloud); });
+            if (!msg.has("step")) return;
+        }
+        if (msg.has("spin")) {
+            final float spin = (float) msg.optDouble("spin", 0), zoom = (float) msg.optDouble("zoom", -1);
+            final float tilt = (float) msg.optDouble("tilt", Double.NaN);
+            main.post(() -> { Listener l = listener; if (l != null) l.onRemoteView(spin, zoom, tilt); });
+            return;
+        }
+        if (!msg.has("step")) return;
+        final int n = msg.getInt("step");
+        final boolean done = msg.optBoolean("finished", false);
+        final boolean replay = msg.optBoolean("replay", false);
+        // "open": the instructions are on screen on the phone, so ours should be too.
+        final boolean open = msg.optBoolean("open", false);
+        final int side = msg.optInt("view", -1);
+        final boolean celebrate = msg.optBoolean("milestone", false);
+        main.post(() -> {
+            boolean changed = n != step || done != finished || side != view || celebrate != milestone;
+            step = n;
+            finished = done;
+            view = side;
+            milestone = celebrate;
+            if (changed || replay || (open && listener == null)) deliver(replay);
+        });
     }
 
     /** Shows the step: on the screen if it is up, otherwise by bringing the screen up. */
@@ -335,14 +366,21 @@ public class LinkService extends Service {
     }
 
     private void broadcast(boolean replay) {
-        String m = message(replay);
-        for (Socket s : clients) sendTo(s, m);
+        toAll(message(replay));
+    }
+
+    /** One line to every phone and Mac: over Wi-Fi or USB (TCP) and over Bluetooth. */
+    private void toAll(String m) {
+        for (Socket c : clients) sendTo(c, m);
+        BleLink b = ble;
+        if (b != null) sender.execute(() -> b.send(m));
     }
 
     @Override
     public void onDestroy() {
         try { if (nsd != null && nsdListener != null) nsd.unregisterService(nsdListener); } catch (Exception ignored) {}
         try { if (server != null) server.close(); } catch (Exception ignored) {}
+        if (ble != null) ble.stop();
         for (Socket s : clients) try { s.close(); } catch (Exception ignored) {}
         sender.shutdown();
         holdMulticast(false);
