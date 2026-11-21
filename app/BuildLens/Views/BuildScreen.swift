@@ -95,6 +95,9 @@ struct BuildScreen: View {
         #endif
     }
 
+    /// The camera is looking for the set's box.
+    private var scanningForSet: Bool { mode == .ar && app.arPhase == .scanning }
+
     /// AR was just opened and is still scanning for the table.
     private var findingSurface: Bool { mode == .ar && app.arFindingSurface }
 
@@ -141,16 +144,17 @@ struct BuildScreen: View {
                 .buttonStyle(CircleButtonStyle(surface: .glass))
                 .accessibilityLabel(app.placingOnSurface ? "Stop looking for a surface" : "Place on a surface")
             }
-            SegmentedPill(
-                title: "View",
-                selection: $mode,
-                options: [(value: Mode.ar, label: "AR"), (value: Mode.viewer, label: "3D")]
-            )
-            .onChange(of: mode) { _, newMode in
-                if newMode == .viewer { app.enterViewer() }
+            // While the camera is looking for the set there is only the way out.
+            if !scanningForSet {
+                SegmentedPill(
+                    title: "View",
+                    selection: $mode,
+                    options: [(value: Mode.ar, label: "AR"), (value: Mode.viewer, label: "3D")]
+                )
             }
             #endif
 
+            if !scanningForSet {
             Menu {
                 Toggle("Focus on new pieces", isOn: Binding(get: { app.focusMode }, set: { app.focusMode = $0 }))
                 Toggle("Read steps aloud", isOn: Binding(get: { app.readAloud }, set: { app.readAloud = $0 }))
@@ -178,7 +182,13 @@ struct BuildScreen: View {
             // Menu symbols stay monochrome: on glass, colour is for status, not decoration.
             .tint(Theme.Palette.textPrimary)
             .accessibilityLabel("More options")
+            }
         }
+        #if os(iOS)
+        .onChange(of: mode) { _, newMode in
+            if newMode == .viewer { app.enterViewer() }
+        }
+        #endif
     }
 
     // MARK: bottom
