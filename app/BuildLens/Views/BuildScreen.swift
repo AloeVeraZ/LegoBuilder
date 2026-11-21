@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The build screen: AR camera (iPhone) or 3D viewer, with the step UI on top.
+/// The build screen: AR camera (iPhone) or 3D viewer, with the step UI floating on top.
+/// The model is the hero, so everything over it is glass and stays at the edges.
 struct BuildScreen: View {
     enum Mode: String, Identifiable, Hashable {
         case viewer, ar
@@ -9,7 +10,14 @@ struct BuildScreen: View {
 
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var mode: Mode
+    @State private var isWide = false
+    /// Measured in global coordinates, to aim the 3D camera at the part of the stage
+    /// that the controls leave free.
+    @State private var stageFrame = CGRect.zero
+    @State private var freeTop: CGFloat = 0
+    @State private var freeBottom: CGFloat = 0
     #if os(iOS)
     @State private var showGlasses = false
     #else
@@ -24,14 +32,33 @@ struct BuildScreen: View {
         ZStack {
             stage
                 .ignoresSafeArea()
-            VStack(spacing: 10) {
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .global)
+                } action: { frame in
+                    stageFrame = frame
+                    aimCamera()
+                }
+            VStack(spacing: Theme.Spacing.sm) {
                 topBar
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.frame(in: .global).maxY
+                    } action: { edge in
+                        freeTop = edge
+                        aimCamera()
+                    }
                 Spacer(minLength: 0)
                 bottom
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, Theme.Spacing.sm)
+            .padding(.vertical, Theme.Spacing.xs)
         }
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width >= Theme.Size.wideBreakpoint
+        } action: { wide in
+            isWide = wide
+        }
+        .buildLensTheme()
         .onAppear {
             if mode == .viewer { app.enterViewer() }
         }
@@ -66,32 +93,25 @@ struct BuildScreen: View {
     // MARK: top bar
 
     private var topBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Theme.Spacing.xs) {
             #if os(iOS)
             Button {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.headline)
-                    .frame(width: 40, height: 40)
             }
-            .buttonStyle(.plain)
-            .background(.ultraThinMaterial, in: Circle())
+            .buttonStyle(CircleButtonStyle(surface: .glass))
+            .accessibilityLabel("Close")
             #endif
 
-            if app.arPhase == .building || mode == .viewer {
-                StepHeader()
-            } else {
-                Spacer()
-            }
+            Spacer(minLength: Theme.Spacing.xs)
 
             #if os(iOS)
-            Picker("View", selection: $mode) {
-                Text("AR").tag(Mode.ar)
-                Text("3D").tag(Mode.viewer)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 96)
+            SegmentedPill(
+                title: "View",
+                selection: $mode,
+                options: [(value: Mode.ar, label: "AR"), (value: Mode.viewer, label: "3D")]
+            )
             .onChange(of: mode) { _, newMode in
                 if newMode == .viewer { app.enterViewer() }
             }
@@ -116,18 +136,54 @@ struct BuildScreen: View {
                 Button { app.restart() } label: { Label("Start over", systemImage: "arrow.counterclockwise") }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.headline)
-                    .frame(width: 40, height: 40)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .circleIcon(surface: .glass)
             }
             .menuIndicator(.hidden)
             .buttonStyle(.plain)
+            // Menu symbols stay monochrome: on glass, colour is for status, not decoration.
+            .tint(Theme.Palette.textPrimary)
+            .accessibilityLabel("More options")
         }
     }
 
     // MARK: bottom
 
+    private var showsZoom: Bool {
+        #if os(iOS)
+        return mode == .viewer
+        #else
+        return true
+        #endif
+    }
+
+    /// The card for the current phase, with the zoom buttons beside it (wide) or above it (narrow).
     @ViewBuilder private var bottom: some View {
+        Group {
+            if isWide {
+                HStack(alignment: .bottom, spacing: Theme.Spacing.sm) {
+                    // Balances the zoom buttons so the card stays centred.
+                    Color.clear.frame(width: Theme.Size.hitTarget, height: Theme.Size.hitTarget)
+                    card.frame(maxWidth: .infinity)
+                    zoom.frame(width: Theme.Size.hitTarget)
+                }
+            } else {
+                VStack(alignment: .trailing, spacing: Theme.Spacing.sm) {
+                    zoom
+                    card.frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .animation(Theme.Motion.respecting(reduceMotion, Theme.Motion.stepChange), value: app.showingFinished)
+        .animation(Theme.Motion.respecting(reduceMotion, Theme.Motion.stepChange), value: app.arPhase)
+    }
+
+    @ViewBuilder private var zoom: some View {
+        if showsZoom, let orbit = app.orbit {
+            ZoomControl(orbit: orbit)
+        }
+    }
+
+    @ViewBuilder private var card: some View {
         #if os(iOS)
         if mode == .ar && app.arPhase == .scanning {
             ScanHint()
@@ -136,53 +192,129 @@ struct BuildScreen: View {
         } else if app.showingFinished {
             FinishedCard()
         } else {
-            BuildPanel(showZoom: mode == .viewer)
+            stepPanel
         }
         #else
         if app.showingFinished {
             FinishedCard()
         } else {
-            BuildPanel(showZoom: true)
+            stepPanel
         }
         #endif
     }
+
+    private var stepPanel: some View {
+        BuildPanel()
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.frame(in: .global).minY
+            } action: { edge in
+                freeBottom = edge
+                aimCamera()
+            }
+    }
+
+    /// Raises the model so it sits in the middle of the area between the top bar and the
+    /// step panel, whatever the size of the window or the screen.
+    private func aimCamera() {
+        guard let orbit = app.orbit, stageFrame.height > 0, freeBottom > freeTop else { return }
+        let freeMiddle = (freeTop + freeBottom) / 2
+        let raise = (stageFrame.midY - freeMiddle) / (stageFrame.height / 2)
+        let bias = Float(min(max(raise, 0), Theme.Size.maxStageRaise))
+        if abs(orbit.verticalBias - bias) > Float(Theme.Size.stageRaiseStep) {
+            orbit.verticalBias = bias
+        }
+    }
 }
 
-/// "Step 3 of 40" with a progress bar and the sync / voice indicators.
+/// Zoom in and out of the 3D view: one glass capsule on the trailing edge, like a map control.
+struct ZoomControl: View {
+    let orbit: OrbitController
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                orbit.zoom(by: 0.8)
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+                    .frame(width: Theme.Size.hitTarget, height: Theme.Size.hitTarget)
+                    .contentShape(Rectangle())
+            }
+            .keyboardShortcut("=", modifiers: [])
+            .accessibilityLabel("Zoom in")
+            .help("Zoom in")
+
+            Rectangle()
+                .fill(Theme.Palette.hairline)
+                .frame(width: Theme.Size.hitTarget / 2, height: Theme.Size.hairline)
+
+            Button {
+                orbit.zoom(by: 1.25)
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+                    .frame(width: Theme.Size.hitTarget, height: Theme.Size.hitTarget)
+                    .contentShape(Rectangle())
+            }
+            .keyboardShortcut("-", modifiers: [])
+            .accessibilityLabel("Zoom out")
+            .help("Zoom out")
+        }
+        .buttonStyle(CardButtonStyle())
+        .font(Theme.Typography.headline)
+        .foregroundStyle(Theme.Palette.textPrimary)
+        .glassSurface(Capsule(), material: .ultraThinMaterial)
+    }
+}
+
+/// "STEP 07 / 23": the current step as a big numeral, the way a manual numbers its pages.
 struct StepHeader: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
-                Text(app.showingFinished ? "Finished" : "Step \(app.step + 1) of \(app.stepCount)")
-                    .font(.headline)
-                    .monospacedDigit()
-                Spacer(minLength: 4)
-                if app.voice.isListening {
-                    Label(app.voice.lastHeard.isEmpty ? "Listening" : "“\(app.voice.lastHeard)”", systemImage: "mic.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .lineLimit(1)
-                }
-                if app.glassesConnected {
-                    Image(systemName: "eyeglasses")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                        .help("Glasses linked")
-                }
-                if !app.syncPeers.isEmpty {
-                    Image(systemName: "link")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                        .help("Synced with \(app.syncPeers.joined(separator: ", "))")
-                }
-            }
-            ProgressView(value: app.showingFinished ? 1 : app.progress)
-                .tint(.accentColor)
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.xs) {
+            Text("Step")
+                .eyebrowStyle()
+                .foregroundStyle(Theme.Palette.textSecondary)
+            Text(String(format: "%02d", app.step + 1))
+                .font(Theme.Typography.numeral)
+                .monospacedDigit()
+                .foregroundStyle(Theme.Palette.textPrimary)
+                .contentTransition(.numericText(value: Double(app.step)))
+            Text("/ \(app.stepCount)")
+                .font(.title3.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(Theme.Palette.textSecondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .lineLimit(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(app.step + 1) of \(app.stepCount)")
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// Live indicators beside the step number: voice control, glasses, device sync.
+struct StatusChips: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        HStack(spacing: Theme.Spacing.xs) {
+            if app.voice.isListening {
+                StatusChip(
+                    symbol: "mic.fill",
+                    text: app.voice.lastHeard.isEmpty ? "Listening" : "“\(app.voice.lastHeard)”",
+                    tint: Theme.Palette.red
+                )
+                .accessibilityLabel(app.voice.lastHeard.isEmpty ? "Voice control is listening" : "Heard \(app.voice.lastHeard)")
+            }
+            if app.glassesConnected {
+                StatusChip(symbol: "eyeglasses", tint: Theme.Palette.green)
+                    .help("Glasses linked")
+                    .accessibilityLabel("Glasses linked")
+            }
+            if !app.syncPeers.isEmpty {
+                StatusChip(symbol: "link", tint: Theme.Palette.green)
+                    .help("Synced with \(app.syncPeers.joined(separator: ", "))")
+                    .accessibilityLabel("Synced with \(app.syncPeers.joined(separator: ", "))")
+            }
+        }
     }
 }
