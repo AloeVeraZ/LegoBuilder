@@ -59,6 +59,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var lastDrag = CGSize.zero
     private var lastTwist: CGFloat = 0
     private var glide: Glide?                    // a move in progress
+    private weak var coaching: ARCoachingOverlayView?
 
     /// A smooth move to a new view, about the middle of the step's pieces.
     private struct Glide {
@@ -96,6 +97,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         coaching.activatesAutomatically = true
         coaching.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(coaching)
+        self.coaching = coaching
         NSLayoutConstraint.activate([
             coaching.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             coaching.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -119,6 +121,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     func rescan() {
         anchor?.removeFromParent()
         anchor = nil
+        glide = nil
     }
 
     // MARK: ARSessionDelegate (ARKit calls these on the main queue)
@@ -140,6 +143,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     private func handle(_ frame: ARFrame) {
         guard let view else { return }
+        // Turning, resizing and the cube go on whatever the camera's tracking is doing.
+        settleIfStepChanged()
+        advanceGlide(at: frame.timestamp)
+        updateCube()
         guard case .normal = frame.camera.trackingState else { return }
 
         if placeWhenTracking {
@@ -158,9 +165,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             }
             return
         }
-        settleIfStepChanged()
-        advanceGlide(at: frame.timestamp)
-        updateCube()
         if app.placingOnSurface, app.arPhase != .scanning { placeOnSurface() }
         if app.arPhase == .scanning, app.needsRescan {
             app.needsRescan = false
@@ -340,7 +344,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     /// Glides from however the model is now to its rest.
     private func settle(duration: TimeInterval) {
         guard anchor != nil, let root = app.scene?.root else { return }
-        root.stopAllAnimations()
         let scale = fitScale()
         let centre = root.position + root.orientation.act(stepCentre(onGround: false) * root.scale.x)
         let target = restCentre(scale: scale)
@@ -434,7 +437,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private func pin(to hit: ARRaycastResult) {
         guard let view, let scene = app.scene else { return }
         let root = scene.root
-        root.stopAllAnimations()
         let growing = glide != nil && root.scale.x < fitScale() * 0.5
         self.anchor?.removeFromParent()
         let pinned = AnchorEntity(raycastResult: hit)
@@ -449,6 +451,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     /// Puts the model at rest on its anchor, sized and turned for where the phone is:
     /// growing in with a spin when it first appears, otherwise straight there.
     private func stand(_ root: Entity, growing: Bool) {
+        // "Move iPhone to start" is only for finding the table the first time. Once the
+        // model is down it must never come back over the build.
+        coaching?.activatesAutomatically = false
+        coaching?.setActive(false, animated: true)
         restGround = .zero
         chooseSize(lookingAt: anchorOrigin)
         restOrientation = stepTurn()
@@ -482,7 +488,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     /// step, not around the middle of the whole truck, so what you are building stays
     /// where it is while it turns or grows.
     private func beginPivot(_ root: Entity, onGround: Bool) {
-        root.stopAllAnimations()
         glide = nil
         pivot = root.position + root.orientation.act(stepCentre(onGround: onGround) * root.scale.x)
     }
@@ -500,7 +505,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         anchor.addChild(scene.root)
         anchorOrigin = position
         anchorTurn = simd_quatf(angle: 0, axis: [0, 1, 0])
-        scene.root.stopAllAnimations()
         stand(scene.root, growing: true)
 
         if !gesturesInstalled {
