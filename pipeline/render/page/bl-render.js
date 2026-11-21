@@ -243,6 +243,135 @@ BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview', lift = 0, p
   return snap(w, h, hud ? 0x000000 : 0xf3f4f6);
 };
 
+// How the build looks once a step is done: every piece so far in plain colours, no arrow,
+// no glow. Reference pictures for the step finder (vision/). yaw: the camera's angle round
+// the model (0 = front, as VIEW_YAWS); elev: degrees above the table. Framed on the shown
+// assembly as it is after this step. stepIndex -1 = nothing built yet (empty table).
+BL.state = function (stepIndex, { w = 768, h = 768, yaw = 0.65, elev = 35, bg = 0xf3f4f6, margin = 1.15, frameOn } = {}) {
+  makeScene(false);
+  if (bg === null) bg = undefined;    // null: see-through background
+  const e = THREE.MathUtils.degToRad(elev);
+  const dir = [Math.sin(yaw) * Math.cos(e), Math.sin(e), Math.cos(yaw) * Math.cos(e)];
+  if (stepIndex < 0) { frame(pkg.assemblies[0].bounds, w, h, dir, margin); return snap(w, h, bg); }
+  const { asm, visible } = cumulative(stepIndex);
+  const local = mat4(asm.matrix).invert();
+  for (const id of visible) addInstance(id, 'normal', local, false);
+  // frameOn: frame on another step's pieces (the step after), so "before" and "after"
+  // pictures of one step line up exactly and only the new pieces differ.
+  const ids = frameOn !== undefined ? [...cumulative(frameOn).visible] : [...visible];
+  const box = boundsOf(ids, local);
+  frame([box.min.toArray(), box.max.toArray()], w, h, dir, margin);
+  return snap(w, h, bg);
+};
+
+// A made-up picture from the glasses' camera, for testing the set-down check
+// (glasses/tools/test_check.sh): the phone lying on a table showing the marker, and the build
+// standing on the spot beside it, put down at some turn, seen through a known lens and pose.
+// World axes are the marker's: x to its right, y to its top, z up out of the screen; the
+// table is `drop` below the screen. cam: { w, h, fx, fy, cx, cy, pose } with pose = camera from
+// marker, column-major (camera x right, y down, z forward; pixel centres at whole numbers).
+// fresh: whether the step's new pieces are on. turn (radians, about up) and shift ([x, z] in
+// the model's axes, metres) say how the build was put down. loose: [x, y, turn] puts a copy of
+// the step's new pieces lying on the table there instead (marker axes, metres).
+BL.scene = function ({ cam, step, fresh = true, turn = 0, shift = [0, 0], offset = 0.11, drop = 0.008, marker,
+                       table = 0xb48a5e, grain = 0.12, sun = [-0.5, 0.7, 1.0], sunPower = 2.2, sky = 1.4, loose = null } = {}) {
+  makeScene(false);
+  scene.clear();
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a7a66, sky));
+  const light = new THREE.DirectionalLight(0xffffff, sunPower);
+  light.position.set(...sun).normalize().multiplyScalar(0.6);
+  light.castShadow = true;
+  light.shadow.mapSize.set(2048, 2048);
+  Object.assign(light.shadow.camera, { left: -0.25, right: 0.25, top: 0.25, bottom: -0.25, near: 0.05, far: 2 });
+  light.shadow.bias = -0.0004;
+  scene.add(light, light.target);
+  root = new THREE.Group();
+  scene.add(root);
+
+  // The table: a big plane with a little grain, so it is not one flat colour.
+  const tc = document.createElement('canvas'); tc.width = tc.height = 256;
+  const tx = tc.getContext('2d');
+  const base = new THREE.Color(table);
+  for (let y = 0; y < 256; y++) {
+    const k = 1 + grain * (Math.sin(y * 0.21 + Math.sin(y * 0.03) * 4) * 0.6 + (Math.random() - 0.5) * 0.4);
+    tx.fillStyle = `rgb(${Math.min(255, base.r * 255 * k)},${Math.min(255, base.g * 255 * k)},${Math.min(255, base.b * 255 * k)})`;
+    tx.fillRect(0, y, 256, 1);
+  }
+  const ttex = new THREE.CanvasTexture(tc); ttex.colorSpace = THREE.SRGBColorSpace;
+  ttex.wrapS = ttex.wrapT = THREE.RepeatWrapping; ttex.repeat.set(6, 6);
+  const tableMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshStandardMaterial({ map: ttex, roughness: 0.85 }));
+  tableMesh.position.z = -drop; tableMesh.receiveShadow = true;
+  scene.add(tableMesh);
+
+  // The phone, screen up, the marker in the middle of its screen.
+  const phone = new THREE.Mesh(new THREE.BoxGeometry(0.078, 0.163, drop), new THREE.MeshStandardMaterial({ color: 0x1b1c20, roughness: 0.4 }));
+  phone.position.z = -drop / 2; phone.castShadow = true; phone.receiveShadow = true;
+  scene.add(phone);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.071, 0.153), new THREE.MeshBasicMaterial({ color: 0xf4f4f4 }));
+  screen.position.z = 0.0002;
+  scene.add(screen);
+  if (marker) {
+    const n = marker.length, mc = document.createElement('canvas'); mc.width = mc.height = n;
+    const mx = mc.getContext('2d');
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { mx.fillStyle = marker[y][x] === '#' ? '#000' : '#fff'; mx.fillRect(x, y, 1, 1); }
+    const mtex = new THREE.CanvasTexture(mc); mtex.magFilter = THREE.NearestFilter; mtex.minFilter = THREE.LinearFilter;
+    mtex.colorSpace = THREE.SRGBColorSpace;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.05), new THREE.MeshBasicMaterial({ map: mtex }));
+    m.position.z = 0.0004;
+    scene.add(m);
+  }
+
+  // The build: the step's assembly in its own axes, centred like the glasses' check model,
+  // standing on its lowest point, turned and shifted, then onto the table beside the marker.
+  const s = pkg.steps[step];
+  const asm = pkg.assemblies[s.assembly];
+  const [blo, bhi] = asm.bounds;
+  const local = new THREE.Matrix4().makeTranslation(-(blo[0] + bhi[0]) / 2, 0, -(blo[2] + bhi[2]) / 2).multiply(mat4(asm.matrix).invert());
+  const { visible, added } = cumulative(step);
+  const shown = [...visible].filter(id => fresh || !added.has(id));
+  const ground = shown.length ? boundsOf(shown, local).min.y : 0;
+  const onTable = new THREE.Matrix4().set(1, 0, 0, offset, 0, 0, -1, 0, 0, 1, 0, -drop, 0, 0, 0, 1);   // model (y up) -> marker (z up)
+  const put = onTable.clone()
+    .multiply(new THREE.Matrix4().makeTranslation(shift[0], -ground, shift[1]))
+    .multiply(new THREE.Matrix4().makeRotationY(turn))
+    .multiply(local);
+  for (const id of shown) addInstance(id, 'normal', put, false);
+  if (loose && !fresh) {
+    // The new pieces lying on the table, not on the build.
+    const ids = [...added];
+    const b = boundsOf(ids, new THREE.Matrix4());
+    const c = b.getCenter(new THREE.Vector3());
+    const lay = new THREE.Matrix4().set(1, 0, 0, loose[0], 0, 1, 0, loose[1], 0, 0, 1, -drop, 0, 0, 0, 1)
+      .multiply(new THREE.Matrix4().makeRotationZ(loose[2]))
+      .multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))
+      .multiply(new THREE.Matrix4().makeTranslation(-c.x, -b.min.y, -c.z));
+    for (const id of ids) addInstance(id, 'normal', lay, false);
+  }
+  root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+
+  // The camera, from its pose and lens.
+  const { w, h, fx, fy, cx, cy, pose } = cam;
+  const fromMarker = new THREE.Matrix4().fromArray(pose);                 // camera (y down, z forward) from marker
+  const flip = new THREE.Matrix4().makeScale(1, -1, -1);                  // three.js camera: y up, looking down -z
+  camera.matrixAutoUpdate = false;
+  camera.matrix.copy(fromMarker.clone().premultiply(flip).invert());
+  camera.matrixWorldNeedsUpdate = true;
+  const near = 0.01, far = 5;
+  camera.projectionMatrix.set(
+    2 * fx / w, 0, 1 - 2 * (cx + 0.5) / w, 0,
+    0, 2 * fy / h, 2 * (cy + 0.5) / h - 1, 0,
+    0, 0, -(far + near) / (far - near), -2 * far * near / (far - near),
+    0, 0, -1, 0);
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+  renderer.setSize(w, h, false);
+  renderer.setClearColor(0x000000, 1);
+  renderer.render(scene, camera);
+  camera.matrixAutoUpdate = true;
+  return renderer.domElement.toDataURL('image/png');
+};
+
 // For each step: the side it is shown from, and its assembly (turning frames are only
 // needed between steps of the same assembly).
 BL.stepViews = () => pkg.steps.map(st => ({ view: st.view ?? 0, assembly: st.assembly }));

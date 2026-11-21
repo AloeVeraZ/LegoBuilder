@@ -107,6 +107,10 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
     private String testPicture;
     /** After lining up, the marker's outline is shown for a while so the fit can be checked. */
     private long showMarkerUntil;
+    /** The set-down check (SetDown, PieceCheck): moves on by itself once the new piece is seen on the build. */
+    private SetDown setDown;
+    private volatile boolean checkOn;       // the ghost is up (marker seen, not lining up, not finished)
+    private volatile int checkStep = -1;    // the step it checks, read on the camera's thread
 
     @Override
     protected void onCreate(Bundle state) {
@@ -120,6 +124,11 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         ghostModel = GhostModel.load(getAssets());
         buildUi();
         camera = new CameraFeed(this, this);
+        setDown = makeSetDown();
+        if (setDown != null) camera.setWatcher((f, l, pose) -> {
+            if (checkOn) setDown.look(f, l.fx, l.fy, l.cx, l.cy, pose, checkStep, SystemClock.uptimeMillis());
+            else setDown.reset();
+        });
         gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             // Without this the view is only ever sent the first touch and no tap or swipe is seen.
             @Override public boolean onDown(MotionEvent e) { return true; }
@@ -198,6 +207,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
     @Override
     protected void onPause() {
         LinkService.setListener(null);
+        checkOn = false;
         camera.stop();
         setGhost(false);
         ghost.onPause();
@@ -219,12 +229,33 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         readIntent(intent);                  // onResume follows and starts the camera or picture
     }
 
+    // ------------------------------------------------------------ the set-down check
+    /** Loads the check (assets/check.bin); null if it is missing, and then the glasses only move on by click. */
+    private SetDown makeSetDown() {
+        try (java.io.InputStream in = getAssets().open("check.bin")) {
+            PieceCheck check = new PieceCheck(CheckModel.read(in));
+            // The ghost shows the build on the spot at one turn, so people put it down about that way.
+            check.turnRange = (float) Math.toRadians(45);
+            return new SetDown(check, (step, result, advance) -> {
+                Log.i(TAG, "set-down check, step " + (step + 1) + ": " + result + (advance ? " -> next step" : ""));
+                if (advance) main.post(() -> {
+                    if (checkOn && LinkService.step == step && !LinkService.finished && !lineup.active()) next();
+                });
+            });
+        } catch (Exception e) {
+            Log.w(TAG, "no set-down check: " + e);
+            return null;
+        }
+    }
+
     // ------------------------------------------------------------ the ghost
     @Override
     public void onMarker(float[] pose, float[] centre, CameraFeed.Lens lens) {
         markerCentre = centre;
         this.lens = lens;
         boolean on = pose != null && !lineup.active() && !LinkService.finished && ghostModel != null;
+        checkStep = LinkService.step;
+        checkOn = on;
         if (on) {
             ghost.setStep(LinkService.step);
             ghost.setShowMarker(SystemClock.uptimeMillis() < showMarkerUntil);

@@ -140,3 +140,69 @@ def ghost():
 
 
 ghost()
+
+
+# ---------------------------------------------------------------- the set-down check
+# For checking that a step's pieces are really on the build (PieceCheck.java): every part's
+# shape, slimmed further (1 mm), each step's pieces with their colour and whether they are
+# new in that step, placed like the ghost (the step's assembly in its own axes, centred).
+# Plain little-endian numbers, so plain Java reads it on the glasses and on a computer:
+#   "BLCK" int version
+#   int colours, then r g b floats (sRGB 0..1) per colour
+#   int parts, then per part: int triangles, 9 floats per triangle
+#   int steps, then per step: float radius, float height, int pieces,
+#       per piece: int part, int colour, int fresh, 12 floats (3 x 4 matrix, column by column)
+def check_model(cell=0.001):
+    geometry = open(os.path.join(data, pkg["geometry"]), "rb").read()
+    shapes = []
+    for part in pkg["parts"]:
+        t = np.concatenate([np.frombuffer(geometry, "<f4", g["vertexCount"] * 3, g["positions"]).reshape(-1, 3)[
+            np.frombuffer(geometry, "<u4", g["indexCount"], g["indices"]).reshape(-1, 3)] for g in part["groups"]])
+        q = np.round(t.reshape(-1, 3) / cell).astype(np.int64)
+        keys, inverse = np.unique(q, axis=0, return_inverse=True)
+        idx = inverse.reshape(-1, 3)
+        idx = idx[(idx[:, 0] != idx[:, 1]) & (idx[:, 1] != idx[:, 2]) & (idx[:, 0] != idx[:, 2])]
+        _, first = np.unique(np.sort(idx, axis=1), axis=0, return_index=True)
+        shapes.append((keys[idx[np.sort(first)]] * cell).astype("<f4"))
+    # Colours: rubber black looks like black to a camera, so the two share one entry.
+    codes = []
+    for inst in pkg["instances"]:
+        code = 0 if inst["colour"] == 256 else inst["colour"]
+        if code not in codes:
+            codes.append(code)
+    rgb = {c["code"]: c["rgba"][:3] for c in pkg["colours"]}
+
+    def mat(m):
+        return np.array(m, dtype=np.float64).reshape(4, 4).T
+
+    inst = [mat(i["matrix"]) for i in pkg["instances"]]
+    asm = [mat(a["matrix"]) for a in pkg["assemblies"]]
+    out_b = bytearray(b"BLCK") + struct.pack("<i", 1)
+    out_b += struct.pack("<i", len(codes)) + b"".join(struct.pack("<3f", *rgb.get(c, [0.6, 0.6, 0.6])) for c in codes)
+    out_b += struct.pack("<i", len(shapes)) + b"".join(struct.pack("<i", len(s)) + s.tobytes() for s in shapes)
+    visible_by = {}
+    out_b += struct.pack("<i", len(pkg["steps"]))
+    for s in pkg["steps"]:
+        a = s["assembly"]
+        visible_by.setdefault(a, []).extend(s["added"])
+        lo, hi = np.array(pkg["assemblies"][a]["bounds"][0]), np.array(pkg["assemblies"][a]["bounds"][1])
+        centre = (lo + hi) / 2
+        place = np.eye(4)
+        place[:3, 3] = [-centre[0], 0, -centre[2]]
+        local = place @ np.linalg.inv(asm[a])
+        added = set(s["added"])
+        pieces = []
+        for i in visible_by[a]:
+            m = local @ inst[i]
+            code = 0 if pkg["instances"][i]["colour"] == 256 else pkg["instances"][i]["colour"]
+            pieces.append((pkg["instances"][i]["part"], codes.index(code), int(i in added), m))
+        ys = np.concatenate([(shapes[p].reshape(-1, 3) @ m[:3, :3].T + m[:3, 3])[:, 1] for p, _, _, m in pieces])
+        radius = max(float(np.hypot(hi[0] - lo[0], hi[2] - lo[2])) / 2, 0.02)
+        out_b += struct.pack("<ffi", radius, float(ys.max() - ys.min()), len(pieces))
+        for p, c, fresh, m in pieces:
+            out_b += struct.pack("<iii", p, c, fresh) + struct.pack("<12f", *m[:3, :4].T.reshape(-1))
+    open(os.path.join(out, "check.bin"), "wb").write(out_b)
+    print(f"check: {sum(len(s) for s in shapes)} triangles in {len(shapes)} parts, {len(codes)} colours, {len(out_b) // 1024} KB")
+
+
+check_model()

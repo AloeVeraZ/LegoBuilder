@@ -25,7 +25,7 @@ import javax.microedition.khronos.opengles.GL10;
  */
 final class GhostView extends GLSurfaceView implements GLSurfaceView.Renderer {
     /** The build stands this far to the right of the marker's middle, clear of the phone (as on the phone). */
-    static final float BUILD_OFFSET = 0.11f;
+    static final float BUILD_OFFSET = PieceCheck.OFFSET;
     private static final float TURN = 1.1f, HOLD = 0.9f;
 
     private final GhostModel model;
@@ -163,8 +163,9 @@ final class GhostView extends GLSurfaceView implements GLSurfaceView.Renderer {
         }
         if (step == null) return;
 
-        // Model (+Y up, on its own ground) onto the table beside the marker: up is out of the screen.
-        float[] onTable = {1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, BUILD_OFFSET, 0, 0, 1};
+        // Model (+Y up, on its own ground) onto the table beside the marker: up is out of the
+        // screen, and the table is a phone's thickness below the screen showing the marker.
+        float[] onTable = {1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, BUILD_OFFSET, 0, -PieceCheck.DROP, 1};
         float[] mv = multiply(pose, onTable);
         float[] mvp = multiply(projection(k), mv);
         float loop = step.turns * TURN + HOLD;

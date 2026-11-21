@@ -69,6 +69,16 @@ final class CameraFeed {
         void onNoCamera();
     }
 
+    /** Sees every picture in which the marker was found, in colour, on the camera's thread (the set-down check). */
+    interface Watcher {
+        /** pose: camera from marker for exactly this picture (not smoothed). Must not keep `frame`: it is reused. */
+        void onPicture(Frame frame, Lens lens, float[] pose);
+    }
+
+    private volatile Watcher watcher;
+
+    void setWatcher(Watcher w) { watcher = w; }
+
     /** Pictures this far apart at most are searched; the rest are skipped, to save the battery. */
     private static final int EVERY_MS = 66;
     /** A marker lost for longer than this is gone; shorter gaps keep the last place. */
@@ -98,7 +108,7 @@ final class CameraFeed {
         ImageReader reader;
         Lens lens;
         final QrFinder finder = new QrFinder();
-        byte[] grey = new byte[0];
+        Frame frame;                    // the latest picture: brightness for the marker, colour for the set-down check
         float[] pose;
         long lastSeen, lastSearch, lastLog;
         int searched, seen;
@@ -191,10 +201,12 @@ final class CameraFeed {
                 long now = SystemClock.uptimeMillis();
                 if (now - lastSearch < EVERY_MS) return;
                 lastSearch = now;
-                Image.Plane y = image.getPlanes()[0];
+                Image.Plane[] planes = image.getPlanes();
+                Image.Plane y = planes[0];
                 int w = image.getWidth(), h = image.getHeight(), stride = y.getRowStride();
                 ByteBuffer buf = y.getBuffer();
-                if (grey.length < w * h) grey = new byte[w * h];
+                if (frame == null || frame.width != w || frame.height != h) frame = new Frame(w, h);
+                byte[] grey = frame.y;
                 if (stride == w) {
                     buf.get(grey, 0, Math.min(buf.remaining(), w * h));
                 } else {
@@ -202,6 +214,11 @@ final class CameraFeed {
                         buf.position(row * stride);
                         buf.get(grey, row * w, w);
                     }
+                }
+                // Colour, only while something wants it (the set-down check): every 2 x 2 block's U and V.
+                if (watcher != null && planes.length >= 3) {
+                    copyChroma(planes[1], frame.u, w / 2, h / 2);
+                    copyChroma(planes[2], frame.v, w / 2, h / 2);
                 }
                 image.close();
                 image = null;
@@ -213,6 +230,19 @@ final class CameraFeed {
             }
         }
 
+        /** One U or V plane (pixelStride 1 or 2, any row stride) into a packed cw x ch array. */
+        private void copyChroma(Image.Plane plane, byte[] out, int cw, int ch) {
+            ByteBuffer b = plane.getBuffer();
+            int ps = plane.getPixelStride(), rs = plane.getRowStride(), limit = b.limit();
+            for (int row = 0; row < ch; row++) {
+                int at = row * rs;
+                for (int col = 0; col < cw; col++) {
+                    int i = at + col * ps;
+                    if (i < limit) out[row * cw + col] = b.get(i);
+                }
+            }
+        }
+
         // -------------------------------------------------------- a still picture instead
         void openPicture(String path) {
             Bitmap bitmap = BitmapFactory.decodeFile(path);
@@ -220,18 +250,12 @@ final class CameraFeed {
             int w = bitmap.getWidth(), h = bitmap.getHeight();
             int[] argb = new int[w * h];
             bitmap.getPixels(argb, 0, w, 0, 0, w, h);
-            final byte[] still = new byte[w * h];
-            for (int i = 0; i < argb.length; i++) {
-                int c = argb[i];
-                still[i] = (byte) ((((c >> 16) & 0xff) * 77 + ((c >> 8) & 0xff) * 150 + (c & 0xff) * 29) >> 8);
-            }
+            frame = Frame.fromArgb(argb, w, h);             // the picture never changes, so it is made once
             lens = Lens.guess(w, h, 0);
             Log.i(TAG, "camera: still picture " + path + ", lens " + lens);
-            grey = new byte[still.length];
             Runnable again = new Runnable() {
                 @Override public void run() {
                     if (!live) return;
-                    System.arraycopy(still, 0, grey, 0, still.length);
                     search(w, h);
                     background.postDelayed(this, 100);
                 }
@@ -242,7 +266,7 @@ final class CameraFeed {
         // -------------------------------------------------------- both
         private void search(int w, int h) {
             long t0 = SystemClock.uptimeMillis();
-            QrFinder.Found found = finder.find(grey, w, h, w);
+            QrFinder.Found found = finder.find(frame.y, w, h, w);
             float[] now = found == null ? null : MarkerPose.solve(found, lens.fx, lens.fy, lens.cx, lens.cy);
             long t1 = SystemClock.uptimeMillis();
             searched++;
@@ -263,6 +287,11 @@ final class CameraFeed {
             final float[] centre = p == null ? null : MarkerPose.project(p, 0, 0, 0, lens.fx, lens.fy, lens.cx, lens.cy);
             final Lens l = lens;
             main.post(() -> { if (run == this && live) listener.onMarker(p, centre, l); });
+            // The set-down check looks at this very picture, with the pose found in it.
+            Watcher wt = watcher;
+            if (wt != null && now != null) {
+                try { wt.onPicture(frame, lens, now); } catch (Throwable e) { Log.e(TAG, "set-down check", e); }
+            }
         }
     }
 
