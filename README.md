@@ -7,13 +7,13 @@ The same app runs on the Mac, and the two stay on the same step.
 
 Hackathon demo set: **LEGO Technic 42233-3 Dump Truck** (Mighty Machines Series 1, 46 pieces).
 
-> The 3D model (`pipeline/models/make_42233_3.py`) follows the printed instructions:
-> the same 23 steps in the same order, with the same sub-builds (front unit 7–12, cab
-> 14–15, tipper-bed half 19–21 ×2). Every piece and count matches the box. Piece
-> positions are matched to the drawings by eye. Three new 2026 parts that the LDraw
-> library doesn't have yet are simplified shapes: the tipper-bed panels (7450, 7451) and
-> the cab frame (7944). With the official PDF, the steps can be re-ordered to match it
-> exactly. The scanner looks for "42233" on the box.
+> The 3D model (`pipeline/models/make_42233_3.py`) follows LEGO's official instruction sheet
+> for 42233 (sheet 3 of 8 on lego.com): the same 23 steps in the same order, with the same
+> sub-builds (front unit 7–12, cab 14–15, tipper-bed half 19–21 ×2). Three new 2026 parts
+> that the LDraw library doesn't have yet (the two cab halves, 7944, and the tipper-bed
+> panels, 7450 and 7451) are modelled from the instruction drawings and placed where their
+> holes line up with the parts they connect to. The chassis positions are matched to the
+> drawings by eye. The scanner looks for "42233" on the box.
 
 ## What's in the repo
 
@@ -24,8 +24,8 @@ app/                      Xcode project: one SwiftUI app for iPhone + Mac
     App/                  app state (AppModel), set config (BuildConfig), helpers
     Build/                loads the step data the converter produces
     Rendering/            RealityKit scene (pieces, highlight, arrow) + 3D orbit viewer
-    AR/                   camera scanning (reads "77243") and AR placement (iPhone only)
-    Services/             voice commands, read-aloud, iPhone<->Mac step sync
+    AR/                   camera scanning (reads "42233") and AR placement (iPhone only)
+    Services/             voice commands, read-aloud, iPhone<->Mac step sync, glasses link
     Views/                screens
     Resources/BuildData/  the converted model: build.json, geometry.bin, thumbnails, glasses frames
 pipeline/                 turns a digital brick model into the app's step data
@@ -34,7 +34,8 @@ pipeline/                 turns a digital brick model into the app's step data
   make_package.sh         convert + render + copy into the app, in one go
   fetch_ldraw.sh          downloads the LDraw parts library (needed by the converter)
 web/                      Windows / browser version: builds one self-contained BuildLens.html
-docs/GLASSES.md           plan for the MicroLumin M6 glasses version
+glasses/                  Android app for the MicroLumin M6 glasses (see glasses/README.md)
+docs/GLASSES.md           early plan for the glasses version (kept for reference)
 ```
 
 ## Run it on Windows (or any computer)
@@ -68,10 +69,15 @@ needs macOS 15+.
 
 AR and camera scanning only work on a real iPhone. The Simulator and the Mac use the 3D viewer.
 
-> The code was written in a Linux container with no Xcode, so it has been syntax-checked
-> but **not compiled yet**. If the first build shows errors, paste them to Claude and they'll
-> be fixed quickly. If Xcode can't open the project at all, regenerate it:
-> `brew install xcodegen && cd app && xcodegen`.
+> Both the iPhone and the Mac build compile cleanly with Xcode 27.2. If Xcode can't open
+> the project at all, regenerate it: `brew install xcodegen && cd app && xcodegen`.
+
+## Run it on the glasses
+
+`glasses/` is a small Android app for the MicroLumin M6 that shows the current step and
+stays in sync with the iPhone over Wi-Fi; see [glasses/README.md](glasses/README.md).
+Without the glasses, `python3 glasses/tools/fake_glasses.py` on a Mac stands in for them,
+so you can check that the iPhone app links and sends steps.
 
 ## Put it on TestFlight
 
@@ -117,8 +123,8 @@ pipeline/make_package.sh path/to/77243.io --set-id 77243-1 --set-name "Oracle Re
 ```
 
 Then run the app again from Xcode. The converter needs `python3` with `numpy`
-(`pip3 install numpy`). The renderer needs Node.js and Playwright
-(`npm i -g playwright && npx playwright install chromium`).
+(`pip3 install numpy`). The renderer needs Node.js and Playwright's Chromium
+(`cd pipeline/render && npm install && npx playwright install chromium`).
 
 Alternatively, send the `.io` / `.ldr` file to Claude and the conversion will be done for you.
 
