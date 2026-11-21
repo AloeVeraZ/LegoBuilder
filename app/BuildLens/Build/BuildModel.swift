@@ -53,6 +53,15 @@ struct BuildPackage: Decodable {
     struct Step: Decodable {
         let assembly: Int
         let added: [Int]
+        /// How the new pieces are pushed home (missing in packages made before this existed).
+        let moves: [Move]?
+    }
+
+    /// Pieces that go on together, and the direction they are pushed, in the shown
+    /// assembly's own axes (+Y up). Always square to the model.
+    struct Move: Decodable {
+        let pieces: [Int]
+        let push: [Float]
     }
 
     let setInfo: SetInfo
@@ -95,6 +104,7 @@ final class BuildModel {
         let index: Int
         let assembly: BuildPackage.Assembly
         let added: [Int]
+        let moves: [BuildPackage.Move]
         /// Everything on screen for this step (pieces added so far in the same assembly).
         let visible: [Int]
         let parts: [PartLine]
@@ -131,6 +141,7 @@ final class BuildModel {
                 index: index,
                 assembly: package.assemblies[step.assembly],
                 added: step.added,
+                moves: step.moves ?? [],
                 visible: visible,
                 parts: partLines(for: step.added)
             ))

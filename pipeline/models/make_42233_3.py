@@ -280,34 +280,47 @@ FRONT_AXLE_Z = FRONT_Z - 20
 # the second hole row below; SPLIT_FLIPPED is upside down, second row above.
 SPLIT_FLIPPED = rot(-X, Z)
 
+# Which way each piece is pushed home, always square to the model: straight down, or
+# straight in from one side, the front or the back. The app holds the piece just off its
+# place along this line, shows an arrow, and slots it in on the next step.
+DOWN, FROM_RIGHT, FROM_LEFT, FROM_FRONT, FROM_BEHIND = Y, -X, X, Z, -Z
+
+def push(direction, line):
+    return "0 !PUSH " + " ".join(f"{v:g}" for v in direction) + "\n" + line
+
 def axle_pins(z, sides=("R", "L")):
     """3749: axle end through the split block's arm into the cross block, pin end out for the wheel."""
     out = []
-    if "R" in sides: out.append(ref(TAN, (20, AXLE_Y, z), SHAFT_X, "3749.dat"))
-    if "L" in sides: out.append(ref(TAN, (-20, AXLE_Y, z), SHAFT_NX, "3749.dat"))
+    if "R" in sides: out.append(push(FROM_RIGHT, ref(TAN, (20, AXLE_Y, z), SHAFT_X, "3749.dat")))
+    if "L" in sides: out.append(push(FROM_LEFT, ref(TAN, (-20, AXLE_Y, z), SHAFT_NX, "3749.dat")))
     return out
 
 def seated_pin(z, hole_y=AXLE_Y):
     """3673 standing in a 1-stud-deep hole centred at hole_y, collar at the hole's top."""
-    return ref(LBG, (0, hole_y - 10, z), SHAFT_UP, "3673.dat")
+    return push(DOWN, ref(LBG, (0, hole_y - 10, z), SHAFT_UP, "3673.dat"))
 
 rear = [
     [ref(DBG, (0, AXLE_Y, REAR_Z), CROSS_BLOCK, "32184.dat"), seated_pin(REAR_Z)],               # 1
-    [ref(BLK, (0, UPPER, REAR_Z), SPLIT_REAR, "92907.dat")],                                     # 2
+    [push(DOWN, ref(BLK, (0, UPPER, REAR_Z), SPLIT_REAR, "92907.dat"))],                         # 2
     axle_pins(REAR_WHEELS[1], sides="R"),                                                        # 3
-    [ref(BLK, (0, AXLE_Y, PIVOT_Z), SPLIT_FLIPPED, "92907.dat")] + axle_pins(REAR_WHEELS[0], sides="R"),  # 4
+    [push(DOWN, ref(BLK, (0, AXLE_Y, PIVOT_Z), SPLIT_FLIPPED, "92907.dat"))]
+    + axle_pins(REAR_WHEELS[0], sides="R"),                                                      # 4
     axle_pins(REAR_WHEELS[0], sides="L") + axle_pins(REAR_WHEELS[1], sides="L"),                 # 5
     [seated_pin(PIVOT_Z)],                                                                       # 6
 ]
 
+# The printed step 10 starts the black axle in the split block's upper hole and step 11
+# pushes it on through the yellow connector's lug. Here the axle arrives in step 11, after
+# the connector has dropped between the arms, so it slides through both in one go.
 front_unit = model("Front Unit.ldr", [
     [ref(DBG, (0, AXLE_Y, FRONT_Z), CROSS_BLOCK, "32184.dat"), seated_pin(FRONT_Z)],             # 7
-    [ref(BLK, (0, UPPER, FRONT_Z), SPLIT_FRONT, "92907.dat")],                                   # 8
+    [push(DOWN, ref(BLK, (0, UPPER, FRONT_Z), SPLIT_FRONT, "92907.dat"))],                       # 8
     axle_pins(FRONT_AXLE_Z, sides="R"),                                                          # 9
-    [ref(BLK, (0, UPPER, FRONT_AXLE_Z), SHAFT_X, "32062.dat")] + axle_pins(FRONT_AXLE_Z, sides="L"),  # 10
-    [ref(YEL, (0, UPPER, FRONT_AXLE_Z), TRIPLE, "63869.dat")],                                   # 11 (axle from 10 pushed through its lug)
-    [ref(BLK, (0, UPPER, PIVOT_Z), SPLIT_FRONT, "92907.dat"),
-     ref(BLK, (0, AXLE_Y, FRONT_Z + 20), SHAFT_X, "32062.dat")],                                 # 12
+    axle_pins(FRONT_AXLE_Z, sides="L"),                                                          # 10
+    [push(DOWN, ref(YEL, (0, UPPER, FRONT_AXLE_Z), TRIPLE, "63869.dat")),
+     push(FROM_RIGHT, ref(BLK, (0, UPPER, FRONT_AXLE_Z), SHAFT_X, "32062.dat"))],                # 11
+    [push(DOWN, ref(BLK, (0, UPPER, PIVOT_Z), SPLIT_FRONT, "92907.dat")),
+     push(FROM_RIGHT, ref(BLK, (0, AXLE_Y, FRONT_Z + 20), SHAFT_X, "32062.dat"))],               # 12
 ])
 
 # The triple connector's three holes run across the truck at this height, pointing along it.
@@ -319,8 +332,10 @@ BEHIND = rot(-X, Y)          # turned 180 degrees
 # holes. Step 17's half slides onto the axle ends from behind, and the frames meet.
 # Sub-build origin = the front half's middle hole.
 cab = model("Cab.ldr", [
-    [ref(YEL, (0, 0, 0), I, "7944.dat"), ref(TAN, (0, 0, 5), rot(-Z, Y), "32002.dat")],          # 14
-    [ref(BLK, (-20, 0, 15), SHAFT_Z, "32062.dat"), ref(BLK, (20, 0, 15), SHAFT_Z, "32062.dat")],  # 15
+    [ref(YEL, (0, 0, 0), I, "7944.dat"),
+     push(FROM_BEHIND, ref(TAN, (0, 0, 5), rot(-Z, Y), "32002.dat"))],                           # 14
+    [push(FROM_BEHIND, ref(BLK, (-20, 0, 15), SHAFT_Z, "32062.dat")),
+     push(FROM_BEHIND, ref(BLK, (20, 0, 15), SHAFT_Z, "32062.dat"))],                            # 15
 ])
 CAB_FRONT = (0, HOLE_Y, CONNECTOR_Z - 15)
 CAB_REAR = (0, HOLE_Y, CONNECTOR_Z + 15)
@@ -334,25 +349,28 @@ LBEAM_PIN_Z = PIVOT_Z + 60
 # hinge axle. The two sides face each other across the L-beam; each side's hinge axle goes
 # through the beam (front hole for one side, rear hole for the other) into the other side.
 bed_half = model("Tipper Bed Half.ldr", [
-    [ref(YEL, (0, 0, 0), I, "7451.dat"), ref(BLK, (20, 0, 0), SHAFT_Z, "32062.dat")],            # 19
-    [ref(YEL, (0, 0, -30), SHAFT_X, "4519.dat")],                                                 # 20
-    [ref(YEL, (0, 0, 0), I, "7450.dat")],                                                         # 21
+    [ref(YEL, (0, 0, 0), I, "7451.dat"),
+     push(FROM_BEHIND, ref(BLK, (20, 0, 0), SHAFT_Z, "32062.dat"))],                             # 19
+    [push(FROM_RIGHT, ref(YEL, (0, 0, -30), SHAFT_X, "4519.dat"))],                              # 20
+    [push(FROM_BEHIND, ref(YEL, (0, 0, 0), I, "7450.dat"))],                                     # 21
 ])
 BED_POS = (0, TOP, PIVOT_Z + 30)
 
 WHEEL_X = 30                 # rims sit on the pin ends, which reach from x = 20 to 40
+def wheel(side_x, z, part, colour):
+    turn, way = (WHEEL_R, FROM_RIGHT) if side_x > 0 else (WHEEL_L, FROM_LEFT)
+    return push(way, ref(colour, (side_x, AXLE_Y, z), turn, part))
+
 main = model("42233-3 Dump Truck.ldr", rear + [
-    [ref(16, (0, 0, 0), I, "Front Unit.ldr")],                                                   # 13
-    [ref(16, CAB_FRONT, I, "Cab.ldr")],                                                          # 16 (after cab sub-build)
-    [ref(YEL, CAB_REAR, BEHIND, "7944.dat")],                                                    # 17
-    [ref(YEL, LBEAM_POS, LBEAM, "32140.dat"),
-     ref(BLK, (0, UPPER, LBEAM_PIN_Z), SHAFT_X, "32062.dat")],                                   # 18
-    [ref(16, BED_POS, I, "Tipper Bed Half.ldr"),
-     ref(16, BED_POS, BEHIND, "Tipper Bed Half.ldr")],                                           # 22
-    [ref(LBG, (WHEEL_X, AXLE_Y, z), WHEEL_R, "42610.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
-    [ref(LBG, (-WHEEL_X, AXLE_Y, z), WHEEL_L, "42610.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
-    [ref(BLK, (WHEEL_X, AXLE_Y, z), WHEEL_R, "50951.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
-    [ref(BLK, (-WHEEL_X, AXLE_Y, z), WHEEL_L, "50951.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS],   # 23
+    [push(DOWN, ref(16, (0, 0, 0), I, "Front Unit.ldr"))],                                       # 13
+    [push(FROM_FRONT, ref(16, CAB_FRONT, I, "Cab.ldr"))],                                        # 16 (after cab sub-build)
+    [push(FROM_BEHIND, ref(YEL, CAB_REAR, BEHIND, "7944.dat"))],                                 # 17
+    [push(DOWN, ref(YEL, LBEAM_POS, LBEAM, "32140.dat")),
+     push(FROM_RIGHT, ref(BLK, (0, UPPER, LBEAM_PIN_Z), SHAFT_X, "32062.dat"))],                 # 18
+    [push(FROM_RIGHT, ref(16, BED_POS, I, "Tipper Bed Half.ldr")),
+     push(FROM_LEFT, ref(16, BED_POS, BEHIND, "Tipper Bed Half.ldr"))],                          # 22
+    [wheel(x, z, part, colour) for part, colour in (("42610.dat", LBG), ("50951.dat", BLK))
+     for x in (WHEEL_X, -WHEEL_X) for z in [FRONT_AXLE_Z] + REAR_WHEELS],                        # 23
 ])
 
 # The main model references the cab after step 13 but its own steps (14-15) must come

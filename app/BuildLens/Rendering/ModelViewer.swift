@@ -70,8 +70,8 @@ final class OrbitController: NSObject {
         view.scene.addAnchor(anchor)
         anchor.addChild(scene.root)
         scene.root.transform = Transform()
-        scene.onFramingChange = { [weak self] centre, radius in
-            self?.frame(centre: centre, radius: radius, animated: true)
+        scene.onFramingChange = { [weak self] centre, radius, glide in
+            self?.frame(centre: centre, radius: radius, animated: glide)
         }
         frame(centre: scene.framingCentre, radius: scene.framingRadius)
         installInput(on: view)

@@ -512,16 +512,30 @@ class StepBuilder:
     def process(self, f: SourceFile, world, ctx, asm_id, emit, depth):
         if depth > MAX_DEPTH:
             return []
-        all_ids, added = [], []
+        all_ids, added, moves, push = [], [], [], None
+
+        def close_step():
+            if emit and added:
+                step = {"assembly": asm_id, "added": added}
+                if moves:
+                    step["moves"] = moves
+                self.steps.append(step)
+
         for raw in f.lines:
             toks = raw.split()
             if not toks:
                 continue
             if toks[0] == "0":
                 if len(toks) >= 2 and toks[1].upper() in ("STEP", "ROTSTEP"):
-                    if emit and added:
-                        self.steps.append({"assembly": asm_id, "added": added})
-                    added = []
+                    close_step()
+                    added, moves = [], []
+                elif len(toks) >= 5 and toks[1].upper() == "!PUSH":
+                    # "0 !PUSH x y z": the next part (or sub-model) is pushed into place along
+                    # this direction, given in this file's own LDraw axes.
+                    try:
+                        push = [float(v) for v in toks[2:5]]
+                    except ValueError:
+                        push = None
                 continue
             if toks[0] != "1" or len(toks) < 15:
                 continue
@@ -555,10 +569,13 @@ class StepBuilder:
                         self.part_files.setdefault(key, child)
                 self.instances.append(Instance(key, col, m))
                 ids = [len(self.instances) - 1]
+            if push is not None and emit:
+                # Stored in the app's axes (+Y up), relative to the assembly being shown.
+                moves.append({"pieces": list(ids), "push": [push[0], -push[1], -push[2]]})
+            push = None
             added += ids
             all_ids += ids
-        if emit and added:
-            self.steps.append({"assembly": asm_id, "added": added})
+        close_step()
         return all_ids
 
 

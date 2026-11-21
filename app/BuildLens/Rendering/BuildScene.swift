@@ -21,6 +21,8 @@ final class BuildScene {
     private var materialCache: [String: RealityKit.Material] = [:]
     private var shownStep = -2          // -1 = finished model
     private var token = 0               // invalidates pending animations when the step changes
+    private var waiting: [Int: Transform] = [:]   // new pieces of the shown step, held off their place
+    private static let clickTime = 0.32
 
     /// Show earlier pieces faded so the new ones stand out.
     var dimPrevious = false
@@ -28,7 +30,8 @@ final class BuildScene {
     /// Centre and radius of what is on screen, in `root` space. The 3D viewer aims its camera at it.
     private(set) var framingCentre: SIMD3<Float> = .zero
     private(set) var framingRadius: Float = 0.1
-    var onFramingChange: ((SIMD3<Float>, Float) -> Void)?
+    /// Centre, radius, and whether the camera should glide there (false = cut).
+    var onFramingChange: ((SIMD3<Float>, Float, Bool) -> Void)?
 
     init(model: BuildModel) {
         self.model = model
@@ -70,9 +73,13 @@ final class BuildScene {
 
     // MARK: showing steps
 
+    /// Shows a step the way you would do it by hand: the new pieces wait just off their
+    /// place with an arrow showing which way to press. Moving on to the next step first
+    /// clicks the waiting pieces home, then brings in the next ones.
     func show(step index: Int, animated: Bool, force: Bool = false) {
         guard index >= 0, index < model.steps.count else { return }
         if index == shownStep && !force { return }
+        let previous = shownStep
         shownStep = index
         token += 1
         turntable.stopAllAnimations()
@@ -81,6 +88,14 @@ final class BuildScene {
         let local = model.assemblyMatrices[info.assembly.id].inverse
         let added = Set(info.added)
         let visible = Set(info.visible)
+
+        // Pieces still waiting from the step before click into place first.
+        var clicking: [Int: Transform] = [:]
+        if animated, !force, previous >= 0, previous == index - 1,
+           model.steps[previous].assembly.id == info.assembly.id {
+            clicking = waiting
+        }
+        waiting.removeAll()
 
         for (i, entity) in entities.enumerated() where !visible.contains(i) {
             entity.stopAllAnimations()
@@ -91,25 +106,55 @@ final class BuildScene {
             entity.stopAllAnimations()
             let look: Look = added.contains(i) ? .highlight : (dimPrevious ? .dimmed : .normal)
             entity.model?.materials = materials(for: model.package.instances[i], look: look)
-            entity.transform = Transform(matrix: local * model.instanceMatrices[i])
+            let seated = Transform(matrix: local * model.instanceMatrices[i])
+            if let from = clicking[i] {
+                entity.transform = from
+                _ = entity.move(to: seated, relativeTo: entity.parent, duration: Self.clickTime, timingFunction: .easeInOut)
+            } else {
+                entity.transform = seated
+            }
             entity.isEnabled = true
         }
-        frame(step: info, local: local)
+        if !clicking.isEmpty { clickWhenSeated() }
+        let sameAssembly = previous >= 0 && model.steps[previous].assembly.id == info.assembly.id
+        frame(step: info, glide: animated && sameAssembly)
         let moves = insertionMoves(for: info, local: local)
-        if animated { animateIn(moves, local: local) }
-        placeArrows(for: moves, local: local)
+        let wait = clicking.isEmpty ? 0 : Self.clickTime + 0.12
+        bringIn(moves, local: local, animated: animated, after: wait)
+        let arrival = moves.map(\.delay).max().map { wait + $0 + 0.55 } ?? 0
+        placeArrows(for: moves, local: local, after: animated ? arrival : 0)
+    }
+
+    /// The soft click, timed to the moment the piece reaches its seat.
+    private func clickWhenSeated() {
+        let current = token
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64((Self.clickTime - 0.04) * 1_000_000_000))
+            guard let self, self.token == current else { return }
+            ClickSound.shared.play()
+        }
     }
 
     /// The whole finished model, every piece in its final place.
     func showFinished(animated: Bool) {
+        let shownWasMainModel = shownStep >= 0 && !model.steps[shownStep].isSubAssembly
         shownStep = -1
         token += 1
+        let clicking = animated && shownWasMainModel ? waiting : [:]
+        waiting.removeAll()
         for (i, entity) in entities.enumerated() {
             entity.stopAllAnimations()
             entity.model?.materials = materials(for: model.package.instances[i], look: .normal)
-            entity.transform = Transform(matrix: model.instanceMatrices[i])
+            let seated = Transform(matrix: model.instanceMatrices[i])
+            if let from = clicking[i] {
+                entity.transform = from
+                _ = entity.move(to: seated, relativeTo: entity.parent, duration: Self.clickTime, timingFunction: .easeInOut)
+            } else {
+                entity.transform = seated
+            }
             entity.isEnabled = true
         }
+        if !clicking.isEmpty { clickWhenSeated() }
         for a in arrows { a.stopAllAnimations(); a.isEnabled = false }
         frame(assembly: model.package.assemblies[0])
         turntable.stopAllAnimations()
@@ -127,34 +172,66 @@ final class BuildScene {
 
     // MARK: internals
 
-    private func frame(assembly a: BuildPackage.Assembly) {
+    private func contentOffset(for a: BuildPackage.Assembly) -> SIMD3<Float> {
         let (lo, hi) = BuildModel.bounds(a.bounds)
         let centre = (lo + hi) / 2
-        content.position = SIMD3(-centre.x, -lo.y, -centre.z)
-        framingCentre = SIMD3(0, (hi.y - lo.y) / 2, 0)
-        framingRadius = max(simd_length(hi - lo) / 2, 0.01)
-        onFramingChange?(framingCentre, framingRadius)
+        return SIMD3(-centre.x, -lo.y, -centre.z)
     }
 
-    /// Frames what is on screen in this step, so early steps are not tiny, but never
-    /// closer than a part of the whole model so single pins don't fill the screen.
-    private func frame(step info: BuildModel.StepInfo, local: simd_float4x4) {
-        let (alo, ahi) = BuildModel.bounds(info.assembly.bounds)
-        let centre = (alo + ahi) / 2
-        content.position = SIMD3(-centre.x, -alo.y, -centre.z)
-        guard !info.visible.isEmpty else { return frame(assembly: info.assembly) }
-        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
-        for i in info.visible {
-            let (plo, phi) = pieceBounds(i, local)
-            lo = pointwiseMin(lo, plo)
-            hi = pointwiseMax(hi, phi)
-        }
-        let whole = max(simd_length(ahi - alo) / 2, 0.01)
-        framingCentre = (lo + hi) / 2 + content.position
-        framingRadius = max(simd_length(hi - lo) / 2 * 1.15, whole * 0.45)
-        onFramingChange?(framingCentre, framingRadius)
+    private func frame(assembly a: BuildPackage.Assembly) {
+        let (lo, hi) = BuildModel.bounds(a.bounds)
+        content.position = contentOffset(for: a)
+        framingCentre = SIMD3(0, (hi.y - lo.y) / 2, 0)
+        framingRadius = max(simd_length(hi - lo) / 2, 0.01)
+        onFramingChange?(framingCentre, framingRadius, true)
     }
+
+    /// Like a CAD assembly, the grounded part stays put: the view only changes when the
+    /// build has outgrown it, not at every step.
+    private func frame(step info: BuildModel.StepInfo, glide: Bool) {
+        content.position = contentOffset(for: info.assembly)
+        let view = stepFraming[info.index]
+        let changed = simd_distance(view.centre, framingCentre) > 1e-5 || abs(view.radius - framingRadius) > 1e-5
+        framingCentre = view.centre
+        framingRadius = view.radius
+        if changed { onFramingChange?(view.centre, view.radius, glide) }
+    }
+
+    /// One view per run of steps: each run ends when the build is nearly twice the size it
+    /// was at the run's start, and the whole run is framed on how it looks at its end.
+    private lazy var stepFraming: [(centre: SIMD3<Float>, radius: Float)] = {
+        let (flo, fhi) = model.finishedBounds
+        let whole = max(simd_length(fhi - flo) / 2, 0.01)
+        var result = [(centre: SIMD3<Float>, radius: Float)](repeating: (.zero, whole), count: model.steps.count)
+        var byAssembly: [Int: [Int]] = [:]
+        for (k, step) in model.steps.enumerated() { byAssembly[step.assembly.id, default: []].append(k) }
+        for (assembly, stepIDs) in byAssembly {
+            let local = model.assemblyMatrices[assembly].inverse
+            let offset = contentOffset(for: model.package.assemblies[assembly])
+            let boxes: [(SIMD3<Float>, SIMD3<Float>)] = stepIDs.map { k in
+                var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+                var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+                for i in model.steps[k].visible {
+                    let (plo, phi) = pieceBounds(i, local)
+                    lo = pointwiseMin(lo, plo)
+                    hi = pointwiseMax(hi, phi)
+                }
+                return (lo, hi)
+            }
+            func radius(_ n: Int) -> Float { simd_length(boxes[n].1 - boxes[n].0) / 2 }
+            var start = 0
+            while start < stepIDs.count {
+                let limit = max(radius(start), whole * 0.3) * 1.8
+                var end = start
+                while end + 1 < stepIDs.count, radius(end + 1) <= limit { end += 1 }
+                let view = (centre: (boxes[end].0 + boxes[end].1) / 2 + offset,
+                            radius: max(radius(end) + waitingGap * 1.4, whole * 0.45))
+                for n in start ... end { result[stepIDs[n]] = view }
+                start = end + 1
+            }
+        }
+        return result
+    }()
 
     private func pieceBounds(_ i: Int, _ local: simd_float4x4) -> (SIMD3<Float>, SIMD3<Float>) {
         let (plo, phi) = BuildModel.bounds(model.package.parts[model.package.instances[i].part].bounds)
@@ -182,7 +259,8 @@ final class BuildScene {
     private struct Move {
         let piece: Int
         let direction: SIMD3<Float>     // unit vector, from the final position out to where it starts
-        let distance: Float
+        let distance: Float             // where it flies in from
+        let gap: Float                  // where it waits until the next step
         let delay: Double
         let group: Int                  // pieces with the same group share one arrow
     }
@@ -201,6 +279,13 @@ final class BuildScene {
     /// main model they arrive as one unit.
     private lazy var subBuilt: Set<Int> = Set(model.steps.filter(\.isSubAssembly).flatMap(\.added))
 
+    /// How far off its place a new piece waits: enough for a pin to be clear of its hole
+    /// (a pin goes 8 mm deep).
+    private var waitingGap: Float {
+        let (lo, hi) = model.finishedBounds
+        return max(simd_length(hi - lo) / 2 * 0.28, 0.012)
+    }
+
     private func insertionMoves(for step: BuildModel.StepInfo, local: simd_float4x4) -> [Move] {
         let ids = step.added
         let newIDs = Set(ids)
@@ -209,12 +294,28 @@ final class BuildScene {
         if !before.isEmpty {
             centreBefore = before.reduce(SIMD3<Float>.zero) { $0 + pieceCentre($1, local) } / Float(before.count)
         }
-        let far = max(framingRadius * 0.7, 0.03)
+        let gap = waitingGap
+        let far = max(framingRadius * 0.9, gap * 2.5)
         let up = SIMD3<Float>(0, 1, 0)
+
+        // The package says exactly how each piece goes on. Pieces it doesn't mention are
+        // the grounded base of the step: they are simply there.
+        if !step.moves.isEmpty {
+            var moves: [Move] = []
+            for (group, authored) in step.moves.enumerated() where authored.push.count == 3 {
+                let push = SIMD3<Float>(authored.push[0], authored.push[1], authored.push[2])
+                guard simd_length(push) > 1e-5 else { continue }
+                for i in authored.pieces where newIDs.contains(i) {
+                    moves.append(Move(piece: i, direction: -simd_normalize(push), distance: far, gap: gap,
+                                      delay: 0.1 + Double(min(group, 10)) * 0.18, group: group + 1))
+                }
+            }
+            return moves
+        }
 
         // A sub-build being attached: everything comes down together.
         if !step.isSubAssembly, ids.count > 1, ids.contains(where: subBuilt.contains) {
-            return ids.map { Move(piece: $0, direction: up, distance: far, delay: 0.15, group: 0) }
+            return ids.map { Move(piece: $0, direction: up, distance: far, gap: gap, delay: 0.15, group: 0) }
         }
 
         var moves: [Move] = []
@@ -237,10 +338,12 @@ final class BuildScene {
                 case .block:
                     if !before.isEmpty, simd_length(away) > 1e-5 {
                         let u = simd_normalize(away)
-                        direction = u.y < -0.6 ? -up : simd_normalize(SIMD3(u.x * 0.5, max(u.y, 0) + 0.8, u.z * 0.5))
+                        direction = u.y < -0.6 ? -up : up       // always square to the model
                     }
                 }
-                moves.append(Move(piece: i, direction: direction, distance: distance,
+                // The first piece of a build is the base: it just sits there, nothing to press it into.
+                let isBase = before.isEmpty && pass == .block
+                moves.append(Move(piece: i, direction: direction, distance: distance, gap: isBase ? 0 : gap,
                                   delay: 0.12 + Double(min(order, 10)) * 0.14, group: moves.count + 1))
                 order += 1
             }
@@ -248,18 +351,28 @@ final class BuildScene {
         return moves
     }
 
-    private func animateIn(_ moves: [Move], local: simd_float4x4) {
+    /// New pieces glide in and stop just off their place. They then stay still: only the
+    /// arrow moves, so the eye goes to where the piece has to be pushed.
+    private func bringIn(_ moves: [Move], local: simd_float4x4, animated: Bool, after wait: Double) {
         let current = token
         for move in moves {
             let entity = entities[move.piece]
-            let endTransform = Transform(matrix: local * model.instanceMatrices[move.piece])
-            var start = endTransform
+            let seated = Transform(matrix: local * model.instanceMatrices[move.piece])
+            var hover = seated
+            hover.translation += move.direction * move.gap
+            if move.gap > 0 { waiting[move.piece] = hover }
+            guard animated else {
+                entity.transform = hover
+                continue
+            }
+            var start = seated
             start.translation += move.direction * move.distance
             entity.transform = start
+            let delay = wait + move.delay
             Task { @MainActor [weak self, weak entity] in
-                try? await Task.sleep(nanoseconds: UInt64(move.delay * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard let self, let entity, self.token == current else { return }
-                _ = entity.move(to: endTransform, relativeTo: entity.parent, duration: 0.7, timingFunction: .easeInOut)
+                _ = entity.move(to: hover, relativeTo: entity.parent, duration: 0.5, timingFunction: .easeOut)
             }
         }
     }
@@ -285,10 +398,10 @@ final class BuildScene {
     }
 
     /// Puts an arrow beside each new piece (or one over a sub-build), pointing the way it goes in.
-    private func placeArrows(for moves: [Move], local: simd_float4x4) {
+    private func placeArrows(for moves: [Move], local: simd_float4x4, after delay: Double) {
         let size = max(framingRadius * 0.09, 0.004)
         var spots: [(tip: SIMD3<Float>, direction: SIMD3<Float>)] = []
-        for (_, members) in Dictionary(grouping: moves, by: \.group).sorted(by: { $0.key < $1.key }) {
+        for (_, members) in Dictionary(grouping: moves.filter { $0.gap > 0 }, by: \.group).sorted(by: { $0.key < $1.key }) {
             guard let direction = members.first?.direction else { continue }
             var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
             var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
@@ -297,8 +410,9 @@ final class BuildScene {
                 lo = pointwiseMin(lo, plo)
                 hi = pointwiseMax(hi, phi)
             }
+            let gap = members.first?.gap ?? 0
             let reach = simd_dot(simd_abs(direction), (hi - lo) / 2)
-            let tip = (lo + hi) / 2 + direction * (reach + size * 0.4)
+            let tip = (lo + hi) / 2 + direction * (gap + reach + size * 0.5)
             if !spots.contains(where: { simd_distance($0.tip, tip) < size * 1.5 }) { spots.append((tip, direction)) }
         }
         for (k, arrow) in arrows.enumerated() {
@@ -310,14 +424,14 @@ final class BuildScene {
                 : simd_quatf(from: [0, 1, 0], to: direction)
             let base = Transform(scale: SIMD3(repeating: size), rotation: rotation, translation: spots[k].tip)
             arrow.transform = base
-            arrow.isEnabled = true
-            var out = base
-            out.translation += direction * size * 0.6
+            arrow.isEnabled = delay <= 0
+            var pressed = base
+            pressed.translation -= direction * size * 0.45
             let bob = FromToByAnimation<Transform>(
                 name: "bob",
                 from: base,
-                to: out,
-                duration: 0.55,
+                to: pressed,
+                duration: 0.75,
                 timing: .easeInOut,
                 isAdditive: false,
                 bindTarget: .transform,
@@ -326,6 +440,14 @@ final class BuildScene {
             if let resource = try? AnimationResource.generate(with: bob) {
                 _ = arrow.playAnimation(resource.repeat())
             }
+        }
+        guard delay > 0 else { return }
+        let current = token
+        let shown = spots.count
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, self.token == current else { return }
+            for arrow in self.arrows.prefix(shown) { arrow.isEnabled = true }
         }
     }
 
