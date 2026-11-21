@@ -40,6 +40,25 @@ struct ScanHint: View {
     }
 }
 
+/// Shown while the camera looks for a table or floor to stand the model on.
+struct SurfaceHint: View {
+    var body: some View {
+        HStack(spacing: Theme.Spacing.xs) {
+            Image(systemName: "arrow.down.to.line")
+                .font(.subheadline.weight(.bold))
+                .symbolEffect(.pulse)
+                .accessibilityHidden(true)
+            Text("Point at a table")
+                .font(Theme.Typography.headline)
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.Palette.textPrimary)
+        .padding(.horizontal, Theme.Spacing.md)
+        .frame(minHeight: Theme.Size.hitTarget)
+        .glassSurface(Capsule())
+    }
+}
+
 /// Shown when the box was found and the finished model popped up.
 struct RevealCard: View {
     @Environment(AppModel.self) private var app

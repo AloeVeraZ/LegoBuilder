@@ -114,6 +114,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             placeInFront()
             return
         }
+        if app.placingOnSurface, app.arPhase != .scanning { placeOnSurface() }
         if app.arPhase == .scanning, app.needsRescan {
             app.needsRescan = false
             rescan()
@@ -202,6 +203,28 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         }
         let camera = view.cameraTransform
         place(at: camera.translation + camera.rotation.act(SIMD3<Float>(0, 0, -1)) * 1.4, found: found)
+    }
+
+    /// Stands the model on the real flat surface the camera is pointed at (a table top, the
+    /// floor), and pins it to that surface so it stays there as you move around. Its size
+    /// and the way it is turned are kept. Tries again every frame until a surface is seen.
+    private func placeOnSurface() {
+        guard let view, let root = app.scene?.root, self.anchor != nil else { return }
+        let point = freeCentre(of: view)
+        // A surface ARKit has actually mapped, not a guess: that is what keeps it grounded.
+        guard let hit = view.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first
+            ?? view.raycast(from: point, allowing: .existingPlaneInfinite, alignment: .horizontal).first else { return }
+        let keep = (root.scale, root.orientation)
+        self.anchor?.removeFromParent()
+        // Tied to the surface ARKit is tracking, so it follows as ARKit refines the surface.
+        let pinned = AnchorEntity(raycastResult: hit)
+        view.scene.addAnchor(pinned)
+        self.anchor = pinned
+        pinned.addChild(root)
+        root.stopAllAnimations()
+        root.transform = Transform(scale: keep.0, rotation: keep.1, translation: .zero)
+        app.placingOnSurface = false
+        Haptics.success()
     }
 
     private func place(at position: SIMD3<Float>, found: Bool) {

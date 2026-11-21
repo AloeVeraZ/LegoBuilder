@@ -46,6 +46,12 @@ struct BuildScreen: View {
                         freeTop = edge
                         aimCamera()
                     }
+                #if os(iOS)
+                if mode == .ar && app.placingOnSurface {
+                    SurfaceHint()
+                        .transition(.opacity)
+                }
+                #endif
                 Spacer(minLength: 0)
                 bottom
             }
@@ -113,6 +119,16 @@ struct BuildScreen: View {
             Spacer(minLength: Theme.Spacing.xs)
 
             #if os(iOS)
+            if mode == .ar && app.arPhase == .building {
+                // Stand the model on the table (or floor) the camera is pointed at.
+                Button {
+                    app.placingOnSurface.toggle()
+                } label: {
+                    Image(systemName: app.placingOnSurface ? "xmark" : "arrow.down.to.line")
+                }
+                .buttonStyle(CircleButtonStyle(surface: .glass))
+                .accessibilityLabel(app.placingOnSurface ? "Stop looking for a surface" : "Place on a surface")
+            }
             SegmentedPill(
                 title: "View",
                 selection: $mode,
@@ -134,6 +150,7 @@ struct BuildScreen: View {
                 #if os(iOS)
                 Button { showGlasses = true } label: { Label("Glasses preview", systemImage: "eyeglasses") }
                 if mode == .ar {
+                    Button { app.placingOnSurface = true } label: { Label("Place on a surface", systemImage: "square.3.layers.3d.down.right") }
                     Button { app.beginScanning() } label: { Label("Scan again", systemImage: "camera.viewfinder") }
                 }
                 #else

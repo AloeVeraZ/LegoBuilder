@@ -21,6 +21,9 @@ final class AppModel {
     private(set) var showingFinished = false
     var arPhase: ARPhase = .scanning
     var needsRescan = false
+    /// AR: the user asked to stand the model on a flat surface. Stays true while the
+    /// camera looks for one, and goes false once the model is sitting on it.
+    var placingOnSurface = false
     private(set) var foundByScan = false
     private(set) var syncPeers: [String] = []
     private(set) var glassesConnected = false
