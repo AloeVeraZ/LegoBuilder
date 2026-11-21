@@ -24,6 +24,9 @@ final class AppModel {
     /// AR: the user asked to stand the model on a flat surface. Stays true while the
     /// camera looks for one, and goes false once the model is sitting on it.
     var placingOnSurface = false
+    /// AR has just been opened and is still looking for the table: nothing of the build
+    /// is shown until the model is standing on it.
+    var arFindingSurface = false
     /// AR: the cube in the corner that turns the model and puts it back.
     let viewCube = ViewCubeModel()
     private(set) var foundByScan = false

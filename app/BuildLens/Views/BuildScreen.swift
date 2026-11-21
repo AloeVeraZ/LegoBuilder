@@ -51,15 +51,19 @@ struct BuildScreen: View {
                     SurfaceHint()
                         .transition(.opacity)
                 }
-                if mode == .ar && app.arPhase == .building && !app.showingFinished {
+                if mode == .ar && app.arPhase == .building && !app.showingFinished && !findingSurface {
                     ViewCube(model: app.viewCube)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .transition(.opacity)
                 }
                 #endif
                 Spacer(minLength: 0)
-                bottom
+                if !findingSurface {
+                    bottom
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .animation(Theme.Motion.respecting(reduceMotion, Theme.Motion.stepChange), value: findingSurface)
             .padding(.horizontal, Theme.Spacing.sm)
             .padding(.vertical, Theme.Spacing.xs)
 
@@ -90,6 +94,9 @@ struct BuildScreen: View {
         .navigationTitle(app.model?.name ?? "Build")
         #endif
     }
+
+    /// AR was just opened and is still scanning for the table.
+    private var findingSurface: Bool { mode == .ar && app.arFindingSurface }
 
     // MARK: stage
 
@@ -124,7 +131,7 @@ struct BuildScreen: View {
             Spacer(minLength: Theme.Spacing.xs)
 
             #if os(iOS)
-            if mode == .ar && app.arPhase == .building {
+            if mode == .ar && app.arPhase == .building && !findingSurface {
                 // Stand the model on the table (or floor) the camera is pointed at.
                 Button {
                     app.placingOnSurface.toggle()

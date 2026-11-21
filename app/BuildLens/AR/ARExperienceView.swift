@@ -111,9 +111,16 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Coming back from the 3D view mid-build: put the model in front of the camera.
         placeWhenTracking = app.arPhase != .scanning
+        if placeWhenTracking {
+            // Scan the table first, before anything else: the step panel stays away and
+            // "Move iPhone to start" is up until there is a surface to stand the model on.
+            app.arFindingSurface = true
+            coaching.setActive(true, animated: false)
+        }
     }
 
     func stop() {
+        app.arFindingSurface = false
         view?.session.pause()
     }
 
@@ -159,7 +166,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 placeWhenTracking = false
                 place(at: hit.worldTransform.translation, found: false)
                 pin(to: hit)
-            } else if frame.timestamp - trackingSince > 6 {
+            } else if frame.timestamp - trackingSince > 10 {
                 placeWhenTracking = false
                 placeInFront()
             }
@@ -455,6 +462,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         // model is down it must never come back over the build.
         coaching?.activatesAutomatically = false
         coaching?.setActive(false, animated: true)
+        if app.arFindingSurface {
+            app.arFindingSurface = false
+            Haptics.success()
+        }
         restGround = .zero
         chooseSize(lookingAt: anchorOrigin)
         restOrientation = stepTurn()
