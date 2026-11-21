@@ -175,8 +175,10 @@ final class OrbitController: NSObject {
         }
     }
 
+    /// Zooming in goes up close; zooming out stops at the step as it was framed (zoom 1):
+    /// any smaller and the pieces are too small to see.
     private func clampDistance(_ d: Float) -> Float {
-        min(max(d, radius * 0.6), radius * 12)
+        min(max(d, radius * 0.6), max(fittedDistance, radius * 0.6))
     }
 
     private func update() {
