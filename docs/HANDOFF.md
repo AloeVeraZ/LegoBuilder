@@ -91,6 +91,7 @@ Commits end with `Co-Authored-By: ...` for the model that wrote them.
 **Apple app** (`app/BuildLens`, SwiftUI + RealityKit + ARKit, iOS 18+/macOS 15+)
 - `App/AppModel.swift`: all state. `next/back/replay/finish/go(to:)`, milestones ("good
   job" between sub-builds), `isSeating`, read-aloud via `speak(key, otherwise:)`, `hush()`.
+  The two menu switches (fade built pieces, read steps aloud) are saved in `UserDefaults`.
 - `Rendering/BuildScene.swift`: step display, slot-in animation, arrows, staged framing.
   `Rendering/ModelViewer.swift`: the 3D orbit view.
 - `AR/ARExperienceView.swift`: scan the box (set number 42233 only), find the table, stand

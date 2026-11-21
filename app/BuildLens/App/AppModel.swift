@@ -57,14 +57,19 @@ final class AppModel {
     /// The side the glasses show the current step from.
     var glassesView: Int { userView ?? currentStep?.view ?? 0 }
 
-    var focusMode = false {
+    // The two switches in the ••• menu are remembered between launches.
+    var focusMode = UserDefaults.standard.bool(forKey: "fadeBuiltPieces") {
         didSet {
+            UserDefaults.standard.set(focusMode, forKey: "fadeBuiltPieces")
             scene?.dimPrevious = focusMode
             scene?.refresh()
         }
     }
-    var readAloud = false {
-        didSet { if readAloud { speakCurrent() } else { speaker.stop() } }
+    var readAloud = UserDefaults.standard.bool(forKey: "readStepsAloud") {
+        didSet {
+            UserDefaults.standard.set(readAloud, forKey: "readStepsAloud")
+            if readAloud { speakCurrent() } else { speaker.stop() }
+        }
     }
 
     let voice: VoiceCommands
@@ -97,6 +102,7 @@ final class AppModel {
             let model = try BuildModel.loadBundled()
             let scene = BuildScene(model: model)
             try await scene.prepare { [weak self] value in self?.loadingProgress = value }
+            scene.dimPrevious = focusMode           // as it was left last time
             scene.showFinished(animated: false)
             self.model = model
             self.scene = scene
