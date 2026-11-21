@@ -254,6 +254,7 @@ struct HomeView: View {
             Button {
                 // Scan the box again; the table marker follows by itself, for the glasses.
                 app.setScanned = false
+                app.skippedBoxScan = false
             } label: {
                 BentoTile(eyebrow: "Set", value: "Scan", symbol: "camera.viewfinder", caption: "Then marker",
                           fill: Theme.Palette.red, isAction: true)

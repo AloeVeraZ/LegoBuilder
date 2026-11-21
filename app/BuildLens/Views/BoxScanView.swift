@@ -30,6 +30,21 @@ struct BoxScanView: View {
             }
             .padding(.bottom, Theme.Spacing.xxl)
         }
+        // Always a way out to the home screen (the scan stays the first thing offered).
+        .overlay(alignment: .topLeading) {
+            Button {
+                app.skippedBoxScan = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: Theme.Size.hitTarget, height: Theme.Size.hitTarget)
+                    .background(Theme.Palette.ink, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(Theme.Spacing.md)
+            .accessibilityLabel("Close")
+        }
         .onAppear { scanner.start() }
         .onDisappear { scanner.stop() }
         .onChange(of: scanner.state) { _, state in

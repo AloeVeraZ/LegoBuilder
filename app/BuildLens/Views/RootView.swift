@@ -15,7 +15,7 @@ struct RootView: View {
                 // messages between the glasses (USB) and the phone. The phone does the inputs.
                 GlassesPreview()
                 #else
-                if !app.setScanned {
+                if !app.setScanned && !app.skippedBoxScan {
                     // First of all: scan the set's box.
                     BoxScanView()
                 } else {

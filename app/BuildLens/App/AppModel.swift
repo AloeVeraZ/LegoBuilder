@@ -118,6 +118,8 @@ final class AppModel {
             #endif
         }
     }
+    /// The box scan was closed with its X: home without scanning (the scan is still offered there).
+    var skippedBoxScan = false
     /// The Mac: the glasses on its cable last said they are scanning, so a phone that links
     /// later is asked for the marker too.
     private var glassesScanning = false
