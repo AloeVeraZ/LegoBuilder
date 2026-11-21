@@ -461,7 +461,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         // "Move iPhone to start" is only for finding the table the first time. Once the
         // model is down it must never come back over the build.
         coaching?.activatesAutomatically = false
-        coaching?.setActive(false, animated: true)
+        coaching?.setActive(false, animated: false)      // gone the moment the model can stand
         if app.arFindingSurface {
             app.arFindingSurface = false
             Haptics.success()
