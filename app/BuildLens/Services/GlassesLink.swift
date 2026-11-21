@@ -85,6 +85,11 @@ final class GlassesLink {
         write("{\"noscan\":true}\n")
     }
 
+    /// The build is over: the glasses go back to their start page.
+    func sendEnd() {
+        write("{\"end\":true}\n")
+    }
+
     func sendBoxScanned() {
         write("{\"box\":true}\n")
     }

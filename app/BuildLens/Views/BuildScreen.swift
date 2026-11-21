@@ -269,13 +269,13 @@ struct BuildScreen: View {
         } else if mode == .ar && app.arPhase == .revealed {
             RevealCard()
         } else if app.showingFinished {
-            FinishedCard(onExit: { dismiss() })
+            FinishedCard(onExit: { app.endBuild(); dismiss() })
         } else {
             stepOrMilestone
         }
         #else
         if app.showingFinished {
-            FinishedCard(onExit: { dismiss() })
+            FinishedCard(onExit: { app.endBuild(); dismiss() })
         } else {
             stepOrMilestone
         }

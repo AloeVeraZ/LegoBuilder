@@ -235,6 +235,19 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
      *  (FOLLOW_VIEW), which needs no place on the table, so the build starts without it. */
     private boolean scanSkipped;
 
+    /** The build is over (Exit on the phone): the start page, the set as on the phone's home.
+     *  A tap there starts again from scanning the box. */
+    @Override
+    public void onEnd() {
+        Log.i(TAG, "build: ended on the phone");
+        closeMenu();
+        hush();
+        animation++;
+        confetti.stop();
+        shownStep = -1;
+        showScreen(HOME);
+    }
+
     @Override
     public void onScanSkipped() {
         Log.i(TAG, "scan: skipped on the phone");
@@ -460,6 +473,7 @@ public class MainActivity extends Activity implements LinkService.Listener, Came
         if (LinkService.haveSettings) onSettings(LinkService.settingsFade, LinkService.settingsVoice, LinkService.settingsAloud);
         if (LinkService.boxWaiting) { LinkService.boxWaiting = false; onBoxScanned(); }
         if (LinkService.skipWaiting) { LinkService.skipWaiting = false; onScanSkipped(); }
+        if (LinkService.endWaiting) { LinkService.endWaiting = false; onEnd(); }
         quietClicks(true);
         head.start();
         show();
