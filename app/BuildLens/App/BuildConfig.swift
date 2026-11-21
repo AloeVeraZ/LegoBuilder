@@ -3,7 +3,7 @@ import CoreGraphics
 /// Everything specific to the set we demo. Change these when the model changes.
 enum BuildConfig {
     /// Number printed on the box and on the instruction booklet. The scanner reads text
-    /// through the camera and starts as soon as it sees this number.
+    /// through the camera and starts only when it sees exactly this number; no other set works.
     static let setNumber = "42233"
 
     /// Optional: add a straight-on photo of the box front to the app as `BoxFront.jpg`

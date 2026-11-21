@@ -8,7 +8,8 @@ import Vision
 ///
 /// While scanning, it reads text from the camera (every ~0.4 s) and looks for the set number
 /// printed on the box or booklet. If a photo of the box front is bundled (BoxFront.jpg) ARKit
-/// also recognises the artwork. Tapping a table places the model by hand.
+/// also recognises the artwork. Nothing else starts the build: there is no way to place the
+/// model by hand, so a different set, or no set, gets no instructions.
 struct ARExperienceView: UIViewRepresentable {
     let app: AppModel
 
@@ -69,8 +70,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             coaching.topAnchor.constraint(equalTo: view.topAnchor),
             coaching.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
 
         // Coming back from the 3D view mid-build: put the model in front of the camera.
         placeWhenTracking = app.arPhase != .scanning
@@ -141,14 +140,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
                 }
                 self.place(atScreenPoint: screen, found: true)
             }
-        }
-    }
-
-    @objc private func tapped(_ gesture: UITapGestureRecognizer) {
-        guard let view, app.arPhase == .scanning else { return }
-        let point = gesture.location(in: view)
-        if let hit = view.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first {
-            place(at: hit.worldTransform.translation, found: false)
         }
     }
 

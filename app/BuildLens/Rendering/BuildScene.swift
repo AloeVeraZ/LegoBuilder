@@ -191,19 +191,23 @@ final class BuildScene {
         return wait
     }
 
-    /// One full turn of the finished model, to show it off.
-    func spin(duration: Double = 2.6) {
+    /// The finished model whips round and coasts to a stop exactly where it started: it
+    /// sets off at full speed and slows all the way, three turns in under three seconds.
+    func spin(turns: Float = 3, duration: Double = 2.8) {
         guard shownStep == -1 else { return }
         let current = token
+        let start = Date()
         Task { @MainActor [weak self] in
-            let frames = Int(duration * 60)
-            for f in 1 ... frames {
+            while true {
                 guard let self, self.token == current else { return }
-                let t = Float(f) / Float(frames)
-                let eased = t * t * (3 - 2 * t)
-                self.turntable.orientation = simd_quatf(angle: eased * 2 * .pi, axis: [0, 1, 0])
-                try? await Task.sleep(nanoseconds: 16_000_000)
+                // Timed against the clock, so it ends on time whatever the frame rate.
+                let t = Float(min(Date().timeIntervalSince(start) / duration, 1))
+                let slowing = 1 - pow(1 - t, 4)
+                self.turntable.orientation = simd_quatf(angle: slowing * turns * 2 * .pi, axis: [0, 1, 0])
+                if t >= 1 { break }
+                try? await Task.sleep(nanoseconds: 8_000_000)
             }
+            self?.turntable.orientation = simd_quatf(angle: 0, axis: [0, 1, 0])
         }
     }
 
