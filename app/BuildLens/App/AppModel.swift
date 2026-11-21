@@ -42,6 +42,13 @@ final class AppModel {
     /// The glasses have placed the build: the phone puts its code away and opens the steps.
     var openInstructionsRequested = false
 
+    /// The phone is at the start (the box scan): BuildLens comes up on the glasses if it was
+    /// closed, directly (Wi-Fi or Bluetooth) and through the Mac (cable).
+    func wakeGlasses() {
+        glasses.sendWake()
+        sync.sendWake()
+    }
+
     /// The finished build is closed (Exit): the glasses go back to their start page too.
     func endBuild() {
         glassesBuilding = false
@@ -283,6 +290,8 @@ final class AppModel {
                 #endif
                 #if os(iOS)
                 if !names.isEmpty { self.sendSettings() }
+                // Linked while still at the start: the glasses come up too.
+                if !names.isEmpty, !self.setScanned { self.sync.sendWake() }
                 #endif
                 #if os(macOS)
                 if self.glassesScanning, !names.isEmpty { self.sync.sendScanRequest() }
@@ -305,6 +314,7 @@ final class AppModel {
             sync.onPlaced = { [weak self] in self?.glassesPlaced() }
             #if os(macOS)
             sync.onScanSkipped = { [weak self] in self?.glassesBuilding = true; self?.glasses.sendScanSkipped() }
+            sync.onWake = { [weak self] in self?.glasses.sendWake() }
             sync.onEnd = { [weak self] in self?.glassesBuilding = false; self?.glasses.sendEnd() }
             #endif
             glasses.onPlaced = { [weak self] in self?.glassesPlaced() }
@@ -324,6 +334,7 @@ final class AppModel {
                 if connected, self.setScanned { self.glasses.sendBoxScanned() }
                 #if os(iOS)
                 if connected { self.sendSettings() }
+                if connected, !self.setScanned { self.glasses.sendWake() }
                 #endif
             }
             // A click on the glasses. They already show the result, so nothing is sent back

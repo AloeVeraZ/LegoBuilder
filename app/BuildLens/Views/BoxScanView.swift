@@ -45,7 +45,10 @@ struct BoxScanView: View {
             .padding(Theme.Spacing.md)
             .accessibilityLabel("Close")
         }
-        .onAppear { scanner.start() }
+        .onAppear {
+            scanner.start()
+            app.wakeGlasses()
+        }
         .onDisappear { scanner.stop() }
         .onChange(of: scanner.state) { _, state in
             guard state == .found else { return }

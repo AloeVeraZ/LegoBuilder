@@ -39,6 +39,11 @@ final class PeerSync: NSObject {
 
     var onScanSkipped: (() -> Void)?
     var onEnd: (() -> Void)?
+    var onWake: (() -> Void)?
+
+    func sendWake() {
+        send(Message(wake: true))
+    }
 
     func sendEnd() {
         send(Message(end: true))
@@ -79,6 +84,8 @@ final class PeerSync: NSObject {
         var noscan: Bool?
         /// The finished build was closed on the phone (the Mac passes it to the glasses).
         var end: Bool?
+        /// The phone is at the start: the Mac brings BuildLens up on its glasses.
+        var wake: Bool?
     }
 
     /// `name` is how this device appears to the others; defaults to the device name.
@@ -153,6 +160,7 @@ final class PeerSync: NSObject {
         if message.placed == true { Task { @MainActor in self.onPlaced?() } }
         if message.noscan == true { Task { @MainActor in self.onScanSkipped?() } }
         if message.end == true { Task { @MainActor in self.onEnd?() } }
+        if message.wake == true { Task { @MainActor in self.onWake?() } }
         if let fade = message.fade { let voice = message.voice, aloud = message.aloud ?? false; Task { @MainActor in self.onSettings?(fade, voice, aloud) } }
         if let glasses = message.glasses { Task { @MainActor in self.onGlassesThroughMac?(glasses) } }
         if let spin = message.spin { let zoom = message.zoom, tilt = message.tilt; Task { @MainActor in self.onRemoteView?(spin, zoom, tilt) } }

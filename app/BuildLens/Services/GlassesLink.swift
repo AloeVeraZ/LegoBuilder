@@ -85,6 +85,11 @@ final class GlassesLink {
         write("{\"noscan\":true}\n")
     }
 
+    /// Brings BuildLens up on the glasses if it is not on their screen.
+    func sendWake() {
+        write("{\"wake\":true}\n")
+    }
+
     /// The build is over: the glasses go back to their start page.
     func sendEnd() {
         write("{\"end\":true}\n")
