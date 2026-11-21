@@ -36,6 +36,8 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var lastScan: TimeInterval = 0
     private var readingText = false
     private var gesturesInstalled = false
+    private var trackingSince: TimeInterval = 0
+    private var pivot = SIMD3<Float>.zero       // the point that stays still while turning or resizing
     private var baseScale: Float = 1
     private var pinchStart: Float = 1
     private var twistStart = simd_quatf(angle: 0, axis: [0, 1, 0])
@@ -110,8 +112,19 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         guard case .normal = frame.camera.trackingState else { return }
 
         if placeWhenTracking {
-            placeWhenTracking = false
-            placeInFront()
+            // Straight into AR: first find the table (the "move iPhone" coaching is up while
+            // this happens), then the step appears standing on it. If no surface turns up
+            // in a few seconds, the model goes in front of the camera instead of nothing.
+            if trackingSince == 0 { trackingSince = frame.timestamp }
+            let point = freeCentre(of: view)
+            if let hit = view.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first {
+                placeWhenTracking = false
+                place(at: hit.worldTransform.translation, found: false)
+                pin(to: hit)
+            } else if frame.timestamp - trackingSince > 6 {
+                placeWhenTracking = false
+                placeInFront()
+            }
             return
         }
         if app.placingOnSurface, app.arPhase != .scanning { placeOnSurface() }
@@ -151,22 +164,25 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
 
     @objc private func pinched(_ g: UIPinchGestureRecognizer) {
         guard let root = app.scene?.root, anchor != nil else { return }
-        if g.state == .began { root.stopAllAnimations(); pinchStart = root.scale.x }
+        if g.state == .began { beginPivot(root); pinchStart = root.scale.x }
         let wanted = pinchStart * Float(g.scale)
         root.scale = SIMD3(repeating: min(max(wanted, baseScale * 0.15), baseScale * 6))
+        holdPivot(root)
     }
 
     @objc private func dragged(_ g: UIPanGestureRecognizer) {
         guard let root = app.scene?.root, anchor != nil, app.arPhase != .scanning else { return }
-        if g.state == .began { root.stopAllAnimations(); twistStart = root.orientation }
+        if g.state == .began { beginPivot(root); twistStart = root.orientation }
         let turn = Float(g.translation(in: g.view).x) * 0.008
         root.orientation = simd_quatf(angle: turn, axis: [0, 1, 0]) * twistStart
+        holdPivot(root)
     }
 
     @objc private func twisted(_ g: UIRotationGestureRecognizer) {
         guard let root = app.scene?.root, anchor != nil else { return }
-        if g.state == .began { root.stopAllAnimations(); twistStart = root.orientation }
+        if g.state == .began { beginPivot(root); twistStart = root.orientation }
         root.orientation = simd_quatf(angle: -Float(g.rotation), axis: [0, 1, 0]) * twistStart
+        holdPivot(root)
     }
 
     // MARK: placing the model
@@ -209,22 +225,48 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     /// floor), and pins it to that surface so it stays there as you move around. Its size
     /// and the way it is turned are kept. Tries again every frame until a surface is seen.
     private func placeOnSurface() {
-        guard let view, let root = app.scene?.root, self.anchor != nil else { return }
+        guard let view, app.scene != nil, self.anchor != nil else { return }
         let point = freeCentre(of: view)
         // A surface ARKit has actually mapped, not a guess: that is what keeps it grounded.
         guard let hit = view.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first
             ?? view.raycast(from: point, allowing: .existingPlaneInfinite, alignment: .horizontal).first else { return }
-        let keep = (root.scale, root.orientation)
+        app.scene?.root.stopAllAnimations()
+        pin(to: hit)
+        app.placingOnSurface = false
+        Haptics.success()
+    }
+
+    /// Ties the model to the surface ARKit is tracking, so it follows as ARKit refines it,
+    /// with the middle of what is being built over the point that was hit.
+    private func pin(to hit: ARRaycastResult) {
+        guard let view, let scene = app.scene else { return }
+        let root = scene.root
+        // If the model was still growing in, finish that now: it must not drift afterwards.
+        root.stopAllAnimations()
+        if root.scale.x < baseScale * 0.15 { root.scale = SIMD3(repeating: baseScale) }
         self.anchor?.removeFromParent()
-        // Tied to the surface ARKit is tracking, so it follows as ARKit refines the surface.
         let pinned = AnchorEntity(raycastResult: hit)
         view.scene.addAnchor(pinned)
         self.anchor = pinned
         pinned.addChild(root)
+        let centre = SIMD3<Float>(scene.framingCentre.x, 0, scene.framingCentre.z)
+        root.position = -root.orientation.act(centre * root.scale.x)
+    }
+
+    /// Turning and resizing happen around the middle of the pieces on screen for this
+    /// step (on the ground under them), not around the middle of the whole truck, so what
+    /// you are building stays where it is while it turns or grows.
+    private func beginPivot(_ root: Entity) {
+        guard let scene = app.scene else { return }
         root.stopAllAnimations()
-        root.transform = Transform(scale: keep.0, rotation: keep.1, translation: .zero)
-        app.placingOnSurface = false
-        Haptics.success()
+        let centre = SIMD3<Float>(scene.framingCentre.x, 0, scene.framingCentre.z)
+        pivot = root.position + root.orientation.act(centre * root.scale.x)
+    }
+
+    private func holdPivot(_ root: Entity) {
+        guard let scene = app.scene else { return }
+        let centre = SIMD3<Float>(scene.framingCentre.x, 0, scene.framingCentre.z)
+        root.position = pivot - root.orientation.act(centre * root.scale.x)
     }
 
     private func place(at position: SIMD3<Float>, found: Bool) {
