@@ -66,7 +66,9 @@ final class GhostView extends GLSurfaceView implements GLSurfaceView.Renderer {
     }
 
     /** How fast a push dies away (per second), and how small and big the LEGO may get. */
-    static final float FRICTION = 3f, MIN_SIZE = 0.05f, MAX_SIZE = 12f;
+    /** MIN_SIZE: about two flicks out from the starting size (one flick is about 1.7 times,
+     *  so 1 / 1.7 / 1.7), and no further: smaller is too small to see. */
+    static final float FRICTION = 3f, MIN_SIZE = 0.33f, MAX_SIZE = 12f;
     private volatile float spinSpeed, zoomSpeed;
     private long lastGlide;
     /** How quickly a set value is reached (seconds to go most of the way): following the
