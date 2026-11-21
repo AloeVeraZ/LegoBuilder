@@ -5,12 +5,14 @@ The model appears in AR on your table, each step's new pieces fly into place und
 bouncing arrow, and the pieces you need are listed with pictures and counts.
 The same app runs on the Mac, and the two stay on the same step.
 
-Hackathon demo set: **77243 Oracle Red Bull Racing RB20 F1 Race Car** (251 pieces).
+Hackathon demo set: **LEGO Technic 42233-3 Dump Truck** (Mighty Machines Series 1, 46 pieces).
 
-> **Right now the app shows a stand-in model** (a small 61-piece car from the LDraw
-> sample library), because we don't have a digital model of 77243 yet. See
-> [Swap in the real RB20 model](#swap-in-the-real-rb20-model). Scanning already looks
-> for "77243", so you can test it with the real box today.
+> The 3D model is our own reconstruction (`pipeline/models/make_42233_3.py`), built
+> from the official parts list and product photo, so every piece and count matches the
+> box. The step order is ours, not LEGO's booklet. Three new 2026 parts that the LDraw
+> library doesn't have yet are simplified shapes: the tipper-bed panels (7450, 7451) and
+> the cab frame (7944). With the official PDF, the steps can be re-ordered to match it
+> exactly. The scanner looks for "42233" on the box.
 
 ## What's in the repo
 
@@ -85,7 +87,7 @@ The app already includes the app icon, the permission texts and the "no encrypti
 flag, so the upload shouldn't ask any extra questions. For each new upload, increase
 **Build** (`CURRENT_PROJECT_VERSION`) by one.
 
-## Swap in the real RB20 model
+## Use a different model
 
 The app's 3D steps come from a digital model of the set that contains its build steps.
 Getting that model is the main piece of work left.

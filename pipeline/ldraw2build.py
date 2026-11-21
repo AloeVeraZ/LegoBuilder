@@ -621,8 +621,13 @@ def main():
     ap.add_argument("--set-id", default="")
     ap.add_argument("--set-name", default="")
     ap.add_argument("--theme", default="")
+    ap.add_argument("--names", help="JSON file mapping part numbers to display names (e.g. the set's official parts list)")
     args = ap.parse_args()
 
+    names = {}
+    if args.names:
+        with open(args.names) as fh:
+            names = json.load(fh)
     files, base_title = load_model(args.model)
     lib = Library(args.library)
     for f in files:
@@ -700,7 +705,7 @@ def main():
         parts_json.append({
             "key": k,
             "number": base.split("/")[-1],
-            "name": (sf.description if sf else f"Unknown part {base}") or base,
+            "name": names.get(base.split("/")[-1]) or (sf.description if sf else f"Unknown part {base}") or base,
             "mirrored": k.endswith("|m"),
             "bounds": [[round(float(v), 6) for v in lo], [round(float(v), 6) for v in hi]],
             "groups": gj,
