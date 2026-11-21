@@ -24,6 +24,8 @@ final class AppModel {
     /// AR: the user asked to stand the model on a flat surface. Stays true while the
     /// camera looks for one, and goes false once the model is sitting on it.
     var placingOnSurface = false
+    /// AR: the cube in the corner that turns the model and puts it back.
+    let viewCube = ViewCubeModel()
     private(set) var foundByScan = false
     private(set) var syncPeers: [String] = []
     private(set) var glassesConnected = false

@@ -51,6 +51,11 @@ struct BuildScreen: View {
                     SurfaceHint()
                         .transition(.opacity)
                 }
+                if mode == .ar && app.arPhase == .building && !app.showingFinished {
+                    ViewCube(model: app.viewCube)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .transition(.opacity)
+                }
                 #endif
                 Spacer(minLength: 0)
                 bottom
