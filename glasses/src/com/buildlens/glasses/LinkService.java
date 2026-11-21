@@ -282,8 +282,39 @@ public class LinkService extends Service {
                 }
             });
             ble.start();
+            // The glasses' own phone-connect service turns Bluetooth off and on now and then,
+            // which drops this app's Bluetooth service: put it back whenever Bluetooth comes
+            // on, and check now and then that it is still being advertised.
+            registerReceiver(new android.content.BroadcastReceiver() {
+                @Override public void onReceive(Context c, Intent i) {
+                    int state = i.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE, -1);
+                    Log.i(TAG, "bluetooth: adapter state " + state);
+                    if (state == android.bluetooth.BluetoothAdapter.STATE_ON) restartBluetooth();
+                    else if (state == android.bluetooth.BluetoothAdapter.STATE_OFF) { BleLink b = ble; if (b != null) b.stop(); }
+                }
+            }, new android.content.IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED));
+            main.postDelayed(bluetoothCheck, 20_000);
         });
     }
+
+    private void restartBluetooth() {
+        BleLink b = ble;
+        if (b == null) return;
+        b.stop();
+        main.postDelayed(b::start, 500);
+        notifyLink();
+    }
+
+    private final Runnable bluetoothCheck = new Runnable() {
+        @Override public void run() {
+            BleLink b = ble;
+            if (b != null && !b.advertising && !b.linked()) {
+                Log.i(TAG, "bluetooth: not advertising, starting again");
+                restartBluetooth();
+            }
+            main.postDelayed(this, 20_000);
+        }
+    };
 
     /** One line from the phone or Mac, by any link. */
     private void handle(String line) throws Exception {

@@ -61,6 +61,8 @@ final class BleLink {
         boolean sending;
     }
     private final Map<String, Phone> phones = new ConcurrentHashMap<>();
+    /** Advertising right now (the system says so); false after Bluetooth goes off or fails. */
+    volatile boolean advertising;
 
     BleLink(Context context, Lines lines) {
         this.context = context;
@@ -98,14 +100,15 @@ final class BleLink {
                     .setConnectable(true).build();
             AdvertiseData data = new AdvertiseData.Builder().addServiceUuid(new ParcelUuid(SERVICE)).build();
             AdvertiseData name = new AdvertiseData.Builder().setIncludeDeviceName(true).build();
-            advertiser.startAdvertising(settings, data, name, advertising);
+            advertiser.startAdvertising(settings, data, name, advertiseCallback);
         } catch (Exception e) {
             Log.w(TAG, "bluetooth: " + e);
         }
     }
 
     void stop() {
-        try { if (advertiser != null) advertiser.stopAdvertising(advertising); } catch (Exception ignored) { }
+        advertising = false;
+        try { if (advertiser != null) advertiser.stopAdvertising(advertiseCallback); } catch (Exception ignored) { }
         try { if (server != null) server.close(); } catch (Exception ignored) { }
         phones.clear();
     }
@@ -152,9 +155,13 @@ final class BleLink {
         }
     }
 
-    private final AdvertiseCallback advertising = new AdvertiseCallback() {
-        @Override public void onStartSuccess(AdvertiseSettings s) { Log.i(TAG, "bluetooth: advertising"); }
-        @Override public void onStartFailure(int error) { Log.w(TAG, "bluetooth: advertising failed " + error); }
+    private final AdvertiseCallback advertiseCallback = new AdvertiseCallback() {
+        @Override public void onStartSuccess(AdvertiseSettings s) { advertising = true; Log.i(TAG, "bluetooth: advertising"); }
+        @Override public void onStartFailure(int error) {
+            // 3 = already advertising (a restart that overlapped): that is fine.
+            advertising = error == ADVERTISE_FAILED_ALREADY_STARTED;
+            Log.w(TAG, "bluetooth: advertising failed " + error);
+        }
     };
 
     private final BluetoothGattServerCallback callback = new BluetoothGattServerCallback() {

@@ -70,6 +70,7 @@ final class GlassesBLE: NSObject {
 extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         MainActor.assumeIsolated {
+            linkLog.info("ble: state \(central.state.rawValue, privacy: .public)"); print("ble: state", central.state.rawValue)
             if central.state == .poweredOn { scan() } else if glasses != nil { lost() }
         }
     }
@@ -78,6 +79,7 @@ extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
                                     advertisementData: [String: Any], rssi RSSI: NSNumber) {
         MainActor.assumeIsolated {
             guard glasses == nil else { return }
+            print("ble: found glasses", peripheral.name ?? "?", RSSI)
             glasses = peripheral
             central.stopScan()
             central.connect(peripheral)
@@ -86,13 +88,14 @@ extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         MainActor.assumeIsolated {
+            print("ble: connected")
             peripheral.delegate = self
             peripheral.discoverServices([Self.service])
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        MainActor.assumeIsolated { lost() }
+        MainActor.assumeIsolated { print("ble: connect failed", error as Any); lost() }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
@@ -101,6 +104,7 @@ extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         MainActor.assumeIsolated {
+            print("ble: services", peripheral.services?.map(\.uuid) ?? [], error as Any)
             guard let service = peripheral.services?.first(where: { $0.uuid == Self.service }) else { return }
             peripheral.discoverCharacteristics([Self.rx, Self.tx], for: service)
         }
@@ -108,6 +112,7 @@ extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         MainActor.assumeIsolated {
+            print("ble: characteristics", service.characteristics?.map(\.uuid) ?? [], error as Any)
             for c in service.characteristics ?? [] {
                 if c.uuid == Self.rx { rxCharacteristic = c }
                 if c.uuid == Self.tx { peripheral.setNotifyValue(true, for: c) }
@@ -117,6 +122,7 @@ extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         MainActor.assumeIsolated {
+            print("ble: notify", characteristic.isNotifying, error as Any)
             if characteristic.uuid == Self.tx, characteristic.isNotifying, rxCharacteristic != nil { ready = true }
         }
     }
