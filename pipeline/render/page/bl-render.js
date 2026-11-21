@@ -154,13 +154,17 @@ function addArrow(box, push, size, pressed, colour) {
   const half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
   const reach = Math.abs(push.x) * half.x + Math.abs(push.y) * half.y + Math.abs(push.z) * half.z;
   const tip = box.getCenter(new THREE.Vector3()).addScaledVector(push, -(reach + size * (pressed ? 0.25 : 0.7)));
-  const mat = new THREE.MeshBasicMaterial({ color: colour });
+  // Pushed in from the front or back: the arrow rides above the piece so it is not hidden by it.
+  if (Math.abs(push.z) > 0.9) tip.y = box.max.y + size * 0.7;
+  // Two flat arrow shapes crossed along the length: reads as an arrow from any side.
+  const mat = new THREE.MeshBasicMaterial({ color: colour, side: THREE.DoubleSide });
+  const outline = new THREE.Shape([[0, 0], [0.34, 0.62], [0.12, 0.62], [0.12, 1.35], [-0.12, 1.35], [-0.12, 0.62], [-0.34, 0.62]]
+    .map(([x, y]) => new THREE.Vector2(x * size, y * size)));
   const arrow = new THREE.Group();
-  const head = new THREE.Mesh(new THREE.ConeGeometry(0.3 * size, 0.6 * size, 24), mat);
-  head.rotation.x = Math.PI; head.position.y = 0.3 * size;
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.1 * size, 0.1 * size, 0.8 * size, 16), mat);
-  shaft.position.y = size;
-  arrow.add(head, shaft);
+  const flat = new THREE.Mesh(new THREE.ShapeGeometry(outline), mat);
+  const crossed = flat.clone();
+  crossed.rotation.y = Math.PI / 2;
+  arrow.add(flat, crossed);
   arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), push);
   arrow.position.copy(tip);
   root.add(arrow);

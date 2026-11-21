@@ -425,20 +425,28 @@ final class BuildScene {
         }
     }
 
+    /// The arrow is two flat arrow shapes crossed at right angles along its length, so it
+    /// reads as an arrow from any side, including nearly end-on (a cone and cylinder turn
+    /// into a blob when they point at the camera). Unit-sized, tip at the origin, tail along +Y.
     private func buildArrows() {
         let material = UnlitMaterial(color: PlatformColor(red: 0.86, green: 0.12, blue: 0.15, alpha: 1))
-        let coneMesh = MeshResource.generateCone(height: 0.6, radius: 0.32)
-        let shaftMesh = MeshResource.generateCylinder(height: 0.7, radius: 0.11)
+        let outline: [SIMD2<Float>] = [[0, 0], [-0.34, 0.62], [0.34, 0.62], [-0.12, 0.62], [0.12, 0.62], [-0.12, 1.35], [0.12, 1.35]]
+        let faces: [UInt32] = [0, 2, 1, 3, 4, 6, 3, 6, 5]
+        var positions: [SIMD3<Float>] = []
+        var indices: [UInt32] = []
+        for plane in 0 ..< 2 {
+            let base = UInt32(positions.count)
+            positions += outline.map { plane == 0 ? SIMD3($0.x, $0.y, 0) : SIMD3(0, $0.y, $0.x) }
+            indices += faces.map { base + $0 }
+            // The same triangles the other way round, so both sides show.
+            indices += stride(from: 0, to: faces.count, by: 3).flatMap { [base + faces[$0], base + faces[$0 + 2], base + faces[$0 + 1]] }
+        }
+        var descriptor = MeshDescriptor(name: "arrow")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.primitives = .triangles(indices)
+        guard let mesh = try? MeshResource.generate(from: [descriptor]) else { return }
         for _ in 0 ..< 8 {
-            // Unit-sized arrow with its tip at the entity origin and its tail along +Y.
-            let arrow = Entity()
-            let cone = ModelEntity(mesh: coneMesh, materials: [material])
-            cone.orientation = simd_quatf(angle: .pi, axis: [1, 0, 0])
-            cone.position = [0, 0.3, 0]
-            let shaft = ModelEntity(mesh: shaftMesh, materials: [material])
-            shaft.position = [0, 0.95, 0]
-            arrow.addChild(cone)
-            arrow.addChild(shaft)
+            let arrow = ModelEntity(mesh: mesh, materials: [material])
             arrow.isEnabled = false
             content.addChild(arrow)
             arrows.append(arrow)
@@ -447,7 +455,7 @@ final class BuildScene {
 
     /// Puts an arrow beside each new piece (or one over a sub-build), pointing the way it goes in.
     private func placeArrows(for moves: [Move], local: simd_float4x4, after delay: Double) {
-        let size = max(framingRadius * 0.09, 0.004)
+        let size = max(framingRadius * 0.11, 0.004)
         var spots: [(tip: SIMD3<Float>, direction: SIMD3<Float>)] = []
         for (_, members) in Dictionary(grouping: moves.filter { $0.gap > 0 }, by: \.group).sorted(by: { $0.key < $1.key }) {
             guard let direction = members.first?.direction else { continue }
@@ -462,7 +470,10 @@ final class BuildScene {
             let reach = simd_dot(simd_abs(direction), (hi - lo) / 2)
             // Keep the whole bounce clear of the piece: the tip never comes closer than
             // half an arrow-length to it.
-            let tip = (lo + hi) / 2 + direction * (gap + reach + size * 1.0)
+            var tip = (lo + hi) / 2 + direction * (gap + reach + size * 1.0)
+            // A piece pushed in from the front or back would hide its own arrow, or wear it
+            // on its face, from most angles. There the arrow rides above the piece instead.
+            if abs(direction.z) > 0.9 { tip.y = hi.y + size * 0.7 }
             if !spots.contains(where: { simd_distance($0.tip, tip) < size * 1.5 }) { spots.append((tip, direction)) }
         }
         let current = token
