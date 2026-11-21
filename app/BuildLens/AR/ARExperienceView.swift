@@ -37,25 +37,38 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private var readingText = false
     private var gesturesInstalled = false
     private var trackingSince: TimeInterval = 0
-    private var restOrientation = simd_quatf(angle: 0, axis: [0, 1, 0])   // upright, as placed
-    private var restPosition = SIMD3<Float>.zero                          // where it stands, as placed
-    private var glide: Glide?                                             // a turn in progress
+    private var placeWhenTracking = false
 
-    /// A smooth turn to a new view, about the middle of the step's pieces.
+    // Where the model is pinned. Kept here (not read back from the anchor entity, which
+    // RealityKit only updates a frame later).
+    private var anchorOrigin = SIMD3<Float>.zero
+    private var anchorTurn = simd_quatf(angle: 0, axis: [0, 1, 0])
+
+    // How the model stands when left alone: the step's pieces over `restGround`, turned
+    // `restOrientation`, and sized so they fill a sphere of `fitRadius` metres.
+    private var restGround = SIMD3<Float>.zero
+    private var restOrientation = simd_quatf(angle: 0, axis: [0, 1, 0])
+    private var fitRadius: Float = 0.1
+    private var userZoom: Float = 1              // pinched bigger or smaller than that
+    private var tumbled = false                  // turned by hand since it last settled
+    private var lastStep = -1
+    private var lastFraming = SIMD4<Float>.zero  // centre and radius the model was settled for
+
+    private var pivot = SIMD3<Float>.zero        // the point that stays still while turning or resizing
+    private var pinchStart: Float = 1
+    private var lastDrag = CGSize.zero
+    private var lastTwist: CGFloat = 0
+    private var glide: Glide?                    // a move in progress
+
+    /// A smooth move to a new view, about the middle of the step's pieces.
     private struct Glide {
         var fromTurn: simd_quatf, toTurn: simd_quatf
+        var fromScale: Float, toScale: Float
         var fromCentre: SIMD3<Float>, toCentre: SIMD3<Float>
         var start: TimeInterval = 0
         var duration: TimeInterval
         var endsAtRest: Bool
     }
-    private var lastStep = -1
-    private var tumbled = false                                           // turned by hand since the last step
-    private var pivot = SIMD3<Float>.zero       // the point that stays still while turning or resizing
-    private var baseScale: Float = 1
-    private var pinchStart: Float = 1
-    private var twistStart = simd_quatf(angle: 0, axis: [0, 1, 0])
-    private var placeWhenTracking = false
 
     init(app: AppModel) {
         self.app = app
@@ -91,8 +104,8 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         ])
 
         app.viewCube.onDrag = { [weak self] moved, began in self?.cubeDragged(moved, began: began) }
-        app.viewCube.onFace = { [weak self] face in self?.look(at: face) }
-        app.viewCube.onHome = { [weak self] in self?.returnToRest() }
+        app.viewCube.onLook = { [weak self] direction, up in self?.look(from: direction, up: up) }
+        app.viewCube.onHome = { [weak self] in self?.goHome() }
 
         // Coming back from the 3D view mid-build: put the model in front of the camera.
         placeWhenTracking = app.arPhase != .scanning
@@ -145,10 +158,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
             }
             return
         }
-        if app.step != lastStep {
-            lastStep = app.step
-            returnToRest()
-        }
+        settleIfStepChanged()
         advanceGlide(at: frame.timestamp)
         updateCube()
         if app.placingOnSurface, app.arPhase != .scanning { placeOnSurface() }
@@ -189,70 +199,170 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     @objc private func pinched(_ g: UIPinchGestureRecognizer) {
         guard let root = app.scene?.root, anchor != nil else { return }
         if g.state == .began { beginPivot(root, onGround: !tumbled); pinchStart = root.scale.x }
-        let wanted = pinchStart * Float(g.scale)
-        root.scale = SIMD3(repeating: min(max(wanted, baseScale * 0.25), baseScale * 8))
+        let fit = fitScale(zoom: 1)
+        root.scale = SIMD3(repeating: min(max(pinchStart * Float(g.scale), fit * 0.25), fit * 8))
         holdPivot(root, onGround: !tumbled)
-        if !tumbled { restPosition = root.position }
+        userZoom = root.scale.x / fit
     }
 
-    /// One finger across the screen turns the model left and right on the spot. Tipping it
-    /// over is the view cube's job, so a stray finger never leaves it at an odd angle.
-    @objc private func dragged(_ g: UIPanGestureRecognizer) {
-        guard let root = app.scene?.root, anchor != nil, app.arPhase != .scanning else { return }
-        if g.state == .began { beginPivot(root, onGround: false); twistStart = root.orientation }
-        root.orientation = simd_quatf(angle: Float(g.translation(in: g.view).x) * 0.008, axis: [0, 1, 0]) * twistStart
+    /// The camera's own right, up and towards-me directions, in the anchor's space.
+    private func cameraAxes() -> (right: SIMD3<Float>, up: SIMD3<Float>, back: SIMD3<Float>)? {
+        guard let view else { return nil }
+        let turn = anchorTurn.inverse * view.cameraTransform.rotation
+        return (turn.act([1, 0, 0]), turn.act([0, 1, 0]), turn.act([0, 0, 1]))
+    }
+
+    /// Turns the model as if it were a ball under the finger: across turns it left and
+    /// right as you see it, up and down rolls it towards or away from you, from any angle.
+    private func roll(_ root: Entity, across: CGFloat, down: CGFloat, perPoint: Float) {
+        guard let axes = cameraAxes() else { return }
+        let turn = simd_quatf(angle: Float(across) * perPoint, axis: axes.up)
+        let tip = simd_quatf(angle: Float(down) * perPoint, axis: axes.right)
+        root.orientation = simd_normalize(turn * tip * root.orientation)
         holdPivot(root, onGround: false)
         tumbled = true
     }
 
+    /// One finger on the screen turns the model freely, in whatever direction it moves.
+    @objc private func dragged(_ g: UIPanGestureRecognizer) {
+        guard let root = app.scene?.root, anchor != nil, app.arPhase != .scanning else { return }
+        let moved = g.translation(in: g.view)
+        if g.state == .began { beginPivot(root, onGround: false); lastDrag = .zero }
+        roll(root, across: moved.x - lastDrag.width, down: moved.y - lastDrag.height, perPoint: 0.008)
+        lastDrag = CGSize(width: moved.x, height: moved.y)
+    }
+
+    /// Two fingers twisting spin it like a dial, facing you.
     @objc private func twisted(_ g: UIRotationGestureRecognizer) {
-        guard let root = app.scene?.root, anchor != nil else { return }
-        if g.state == .began { beginPivot(root, onGround: false); twistStart = root.orientation }
-        root.orientation = simd_quatf(angle: -Float(g.rotation), axis: [0, 1, 0]) * twistStart
+        guard let root = app.scene?.root, anchor != nil, let axes = cameraAxes() else { return }
+        if g.state == .began { beginPivot(root, onGround: false); lastTwist = 0 }
+        root.orientation = simd_normalize(simd_quatf(angle: -Float(g.rotation - lastTwist), axis: axes.back) * root.orientation)
+        lastTwist = g.rotation
         holdPivot(root, onGround: false)
         tumbled = true
     }
 
     // MARK: the view cube
 
-    /// Dragging the cube turns the model with it, any way up: across turns it left and
-    /// right, up and down tips it towards or away from you.
+    /// Dragging the cube turns the model with it, the same way a finger on the model does.
     private func cubeDragged(_ moved: CGSize, began: Bool) {
-        guard let view, let anchor, let root = app.scene?.root else { return }
-        if began { beginPivot(root, onGround: false); twistStart = root.orientation }
-        let inAnchor = anchor.orientation(relativeTo: nil).inverse
-        let flat = view.cameraTransform.rotation.act(SIMD3<Float>(1, 0, 0)) * SIMD3<Float>(1, 0, 1)
-        let across = inAnchor.act(simd_length(flat) > 0.01 ? simd_normalize(flat) : SIMD3<Float>(1, 0, 0))
-        let turn = simd_quatf(angle: Float(moved.width) * 0.022, axis: [0, 1, 0])
-        let tip = simd_quatf(angle: Float(moved.height) * 0.022, axis: across)
-        root.orientation = simd_normalize(tip * turn * twistStart)
-        holdPivot(root, onGround: false)
+        guard anchor != nil, let root = app.scene?.root else { return }
+        if began { beginPivot(root, onGround: false); lastDrag = .zero }
+        roll(root, across: moved.width - lastDrag.width, down: moved.height - lastDrag.height, perPoint: 0.03)
+        lastDrag = moved
+    }
+
+    /// Tapping the cube turns the model so that side (or edge, or corner) looks straight
+    /// into the phone, however the phone is held.
+    private func look(from direction: SIMD3<Float>, up: SIMD3<Float>) {
+        guard let view, anchor != nil, let root = app.scene?.root else { return }
+        beginPivot(root, onGround: false)
+        // The model's own axes that should end up as the screen's right, up and towards-me.
+        let z = simd_normalize(direction)
+        let x = simd_normalize(simd_cross(up, z))
+        let y = simd_cross(z, x)
+        let toScreen = simd_quatf(simd_float3x3(columns: (x, y, z))).inverse
+        let wanted = simd_normalize(anchorTurn.inverse * view.cameraTransform.rotation * toScreen)
+        glide = Glide(fromTurn: root.orientation, toTurn: wanted, fromScale: root.scale.x, toScale: root.scale.x,
+                      fromCentre: pivot, toCentre: pivot, duration: 0.6, endsAtRest: false)
         tumbled = true
     }
 
-    /// Tapping a side of the cube turns that side of the model squarely towards you.
-    private func look(at face: ViewCubeModel.Face) {
-        guard let view, let anchor, let root = app.scene?.root else { return }
-        beginPivot(root, onGround: false)
-        let centre = anchor.convert(position: pivot, to: nil)
-        var towards = view.cameraTransform.translation - centre
+    /// The home button: back to how the step is meant to be seen, at its normal size.
+    private func goHome() {
+        userZoom = 1
+        settle(duration: 0.7)
+    }
+
+    // MARK: settling into the step's own view
+
+    /// The size at which the step's pieces fill the space chosen for them.
+    private func fitScale(zoom: Float? = nil) -> Float {
+        let radius = max(app.scene?.framingRadius ?? 0.1, 0.005)
+        return fitRadius / radius * (zoom ?? userZoom)
+    }
+
+    /// Chooses how big the step's pieces should be in the room so that, from where the
+    /// phone is now, they take up about half the width of the screen: the same on a desk
+    /// at arm's length as on the floor across the room.
+    private func chooseSize(lookingAt point: SIMD3<Float>) {
+        guard let view else { return }
+        let distance = simd_distance(view.cameraTransform.translation, point)
+        var halfWidthPerMetre: Float = 0.33
+        if let camera = view.session.currentFrame?.camera, view.bounds.height > 0 {
+            // Upright, the screen's height shows the camera image's long side.
+            let long = Float(max(camera.imageResolution.width, camera.imageResolution.height))
+            let focal = camera.intrinsics[0][0]
+            if focal > 0 { halfWidthPerMetre = long / 2 / focal * Float(view.bounds.width / view.bounds.height) }
+        }
+        fitRadius = min(max(distance * halfWidthPerMetre * 0.5, 0.02), 0.5)
+        userZoom = 1
+    }
+
+    /// The way the model should be turned for this step: the side the 3D view would show
+    /// (where the new pieces go on), facing wherever the phone is now.
+    private func stepTurn() -> simd_quatf {
+        guard let view else { return restOrientation }
+        var towards = view.cameraTransform.translation - (anchorOrigin + anchorTurn.act(restGround))
         towards.y = 0
-        guard simd_length(towards) > 0.01 else { return }
-        towards = simd_normalize(towards)
-        let facingMe = simd_quatf(angle: atan2(towards.x, towards.z), axis: [0, 1, 0])
-        let wanted = simd_normalize(anchor.orientation(relativeTo: nil).inverse * facingMe * face.toFront)
-        glide = Glide(fromTurn: root.orientation, toTurn: wanted, fromCentre: pivot, toCentre: pivot, duration: 0.6, endsAtRest: false)
-        tumbled = true
+        guard simd_length(towards) > 0.01 else { return restOrientation }
+        let side = BuildModel.viewYaws[app.userView ?? app.currentStep?.view ?? 0]
+        let facing = simd_quatf(angle: atan2(towards.x, towards.z) - side, axis: [0, 1, 0])
+        return simd_normalize(anchorTurn.inverse * facing)
+    }
+
+    private func angle(between a: simd_quatf, and b: simd_quatf) -> Float {
+        2 * acos(min(1, abs(simd_dot(a.vector, b.vector))))
+    }
+
+    /// Where the middle of the step's pieces is when the model is at rest at this size.
+    private func restCentre(scale: Float) -> SIMD3<Float> {
+        restGround + SIMD3(0, stepCentre(onGround: false).y * scale, 0)
+    }
+
+    /// A new step (or one that needs more room): turn to its side, resize to fit and
+    /// stand its pieces on the spot, as the 3D view does with its camera.
+    private func settleIfStepChanged() {
+        guard anchor != nil, let scene = app.scene else { return }
+        let framing = SIMD4<Float>(scene.framingCentre, scene.framingRadius)
+        guard app.step != lastStep || simd_distance(framing, lastFraming) > 1e-5 else { return }
+        let newStep = app.step != lastStep
+        lastStep = app.step
+        lastFraming = framing
+        if newStep {
+            // Only turn when it is worth it: a small difference is not a reason to move.
+            let wanted = stepTurn()
+            if angle(between: wanted, and: restOrientation) > 0.35 { restOrientation = wanted }
+        }
+        settle(duration: 0.7)
+    }
+
+    /// Glides from however the model is now to its rest.
+    private func settle(duration: TimeInterval) {
+        guard anchor != nil, let root = app.scene?.root else { return }
+        root.stopAllAnimations()
+        let scale = fitScale()
+        let centre = root.position + root.orientation.act(stepCentre(onGround: false) * root.scale.x)
+        let target = restCentre(scale: scale)
+        let still = angle(between: root.orientation, and: restOrientation) < 0.005
+            && abs(root.scale.x / scale - 1) < 0.005 && simd_distance(centre, target) < 0.001
+        if still { glide = nil; tumbled = false; return }
+        glide = Glide(fromTurn: root.orientation, toTurn: restOrientation, fromScale: root.scale.x, toScale: scale,
+                      fromCentre: centre, toCentre: target, duration: duration, endsAtRest: true)
+    }
+
+    private func apply(_ g: Glide, eased: Float, to root: Entity) {
+        root.orientation = simd_slerp(g.fromTurn, g.toTurn, eased)
+        root.scale = SIMD3(repeating: g.fromScale * pow(g.toScale / g.fromScale, eased))
+        let centre = g.fromCentre + (g.toCentre - g.fromCentre) * eased
+        root.position = centre - root.orientation.act(stepCentre(onGround: false) * root.scale.x)
     }
 
     private func advanceGlide(at time: TimeInterval) {
         guard var g = glide, let root = app.scene?.root, anchor != nil else { glide = nil; return }
         if g.start == 0 { g.start = time; glide = g }
         let t = Float(min(1, max(0, (time - g.start) / g.duration)))
-        let eased = t * t * (3 - 2 * t)
-        root.orientation = simd_slerp(g.fromTurn, g.toTurn, eased)
-        let centre = g.fromCentre + (g.toCentre - g.fromCentre) * eased
-        root.position = centre - root.orientation.act(stepCentre(onGround: false) * root.scale.x)
+        apply(g, eased: t * t * (3 - 2 * t), to: root)
         if t >= 1 {
             glide = nil
             if g.endsAtRest { tumbled = false }
@@ -262,10 +372,10 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     /// Keeps the cube turned the way the model looks from where the camera is now.
     private func updateCube() {
         guard let view, anchor != nil, let root = app.scene?.root else { return }
-        let seen = simd_normalize(view.cameraTransform.rotation.inverse * root.orientation(relativeTo: nil))
+        let seen = simd_normalize(view.cameraTransform.rotation.inverse * anchorTurn * root.orientation)
         let cube = app.viewCube
         if abs(simd_dot(seen.vector, cube.rotation.vector)) < 0.99998 { cube.rotation = seen }
-        let turned = tumbled && !(glide?.endsAtRest ?? false)
+        let turned = (tumbled || abs(userZoom - 1) > 0.05) && !(glide?.endsAtRest ?? false)
         if cube.turned != turned { cube.turned = turned }
     }
 
@@ -314,7 +424,6 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         // A surface ARKit has actually mapped, not a guess: that is what keeps it grounded.
         guard let hit = view.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first
             ?? view.raycast(from: point, allowing: .existingPlaneInfinite, alignment: .horizontal).first else { return }
-        app.scene?.root.stopAllAnimations()
         pin(to: hit)
         app.placingOnSurface = false
         Haptics.success()
@@ -325,16 +434,41 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
     private func pin(to hit: ARRaycastResult) {
         guard let view, let scene = app.scene else { return }
         let root = scene.root
-        // If the model was still growing in, finish that now: it must not drift afterwards.
         root.stopAllAnimations()
-        if root.scale.x < baseScale * 0.15 { root.scale = SIMD3(repeating: baseScale) }
+        let growing = glide != nil && root.scale.x < fitScale() * 0.5
         self.anchor?.removeFromParent()
         let pinned = AnchorEntity(raycastResult: hit)
         view.scene.addAnchor(pinned)
         self.anchor = pinned
         pinned.addChild(root)
-        root.position = -root.orientation.act(stepCentre(onGround: true) * root.scale.x)
-        rememberRest(root)
+        anchorOrigin = hit.worldTransform.translation
+        anchorTurn = simd_normalize(simd_quatf(hit.worldTransform))
+        stand(root, growing: growing)
+    }
+
+    /// Puts the model at rest on its anchor, sized and turned for where the phone is:
+    /// growing in with a spin when it first appears, otherwise straight there.
+    private func stand(_ root: Entity, growing: Bool) {
+        restGround = .zero
+        chooseSize(lookingAt: anchorOrigin)
+        restOrientation = stepTurn()
+        tumbled = false
+        lastStep = app.step
+        if let scene = app.scene { lastFraming = SIMD4(scene.framingCentre, scene.framingRadius) }
+        let scale = fitScale()
+        let arrive = Glide(
+            fromTurn: restOrientation * simd_quatf(angle: -.pi * 0.9, axis: [0, 1, 0]), toTurn: restOrientation,
+            fromScale: scale * 0.02, toScale: scale,
+            fromCentre: restGround, toCentre: restCentre(scale: scale),
+            duration: 0.9, endsAtRest: true
+        )
+        if growing {
+            glide = arrive
+            apply(arrive, eased: 0, to: root)
+        } else {
+            glide = nil
+            apply(arrive, eased: 1, to: root)
+        }
     }
 
     /// The middle of the pieces on screen for this step, in the model's own space:
@@ -357,65 +491,25 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         root.position = pivot - root.orientation.act(stepCentre(onGround: onGround) * root.scale.x)
     }
 
-    /// Remembers how the model stands (upright, where it was put), to come back to.
-    private func rememberRest(_ root: Entity) {
-        restOrientation = root.orientation
-        restPosition = root.position
-        glide = nil
-        tumbled = false
-    }
-
-    /// Glides the model back to how it stood when it was placed: on a new step, so the
-    /// step is seen the way it is meant to be, and from the cube's home button.
-    private func returnToRest() {
-        guard tumbled, let root = app.scene?.root, anchor != nil else { return }
-        root.stopAllAnimations()
-        let centre = stepCentre(onGround: false) * root.scale.x
-        glide = Glide(
-            fromTurn: root.orientation, toTurn: restOrientation,
-            fromCentre: root.position + root.orientation.act(centre),
-            toCentre: restPosition + restOrientation.act(centre),
-            duration: 0.7, endsAtRest: true
-        )
-    }
-
     private func place(at position: SIMD3<Float>, found: Bool) {
         guard let view, let scene = app.scene else { return }
-        let anchor: AnchorEntity
-        if let existing = self.anchor {
-            anchor = existing
-        } else {
-            anchor = AnchorEntity(world: position)
-            view.scene.addAnchor(anchor)
-            self.anchor = anchor
-        }
-        anchor.position = position
+        self.anchor?.removeFromParent()
+        let anchor = AnchorEntity(world: position)
+        view.scene.addAnchor(anchor)
+        self.anchor = anchor
         anchor.addChild(scene.root)
-
-        // Face the camera, at a comfortable size, growing in with a spin.
-        let toCamera = view.cameraTransform.translation - position
-        let yaw = atan2(toCamera.x, toCamera.z)
-        let (lo, hi) = scene.model.finishedBounds
-        let longest = max(hi.x - lo.x, hi.y - lo.y, hi.z - lo.z, 0.001)
-        let scale = max(1, BuildConfig.arTargetSize / longest)
-        let finalTransform = Transform(scale: SIMD3(repeating: scale), rotation: simd_quatf(angle: yaw, axis: [0, 1, 0]), translation: .zero)
+        anchorOrigin = position
+        anchorTurn = simd_quatf(angle: 0, axis: [0, 1, 0])
         scene.root.stopAllAnimations()
-        scene.root.transform = Transform(scale: SIMD3(repeating: scale * 0.02), rotation: simd_quatf(angle: yaw - .pi * 0.9, axis: [0, 1, 0]), translation: .zero)
-        _ = scene.root.move(to: finalTransform, relativeTo: anchor, duration: 0.9, timingFunction: .easeOut)
-        restOrientation = finalTransform.rotation
-        restPosition = .zero
-        glide = nil
-        tumbled = false
+        stand(scene.root, growing: true)
 
-        baseScale = scale
         if !gesturesInstalled {
             gesturesInstalled = true
-            // The model stays where it was put: no dragging it around the room. Spreading
-            // two fingers anywhere on the screen makes it bigger, pinching makes it smaller,
-            // and a two-finger twist turns it on the spot.
+            // The model stays where it was put: no dragging it around the room. One finger
+            // turns it, spreading two fingers anywhere makes it bigger, pinching smaller,
+            // and a two-finger twist spins it facing you.
             view.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:))))
             view.addGestureRecognizer(UIRotationGestureRecognizer(target: self, action: #selector(twisted(_:))))
-            // One finger across the screen turns the model, to look at it from any side.
             let drag = UIPanGestureRecognizer(target: self, action: #selector(dragged(_:)))
             drag.maximumNumberOfTouches = 1
             view.addGestureRecognizer(drag)
