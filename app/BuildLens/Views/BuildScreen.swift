@@ -174,12 +174,26 @@ struct BuildScreen: View {
             }
         }
         .animation(Theme.Motion.respecting(reduceMotion, Theme.Motion.stepChange), value: app.showingFinished)
+        .animation(Theme.Motion.respecting(reduceMotion, Theme.Motion.stepChange), value: app.milestone)
         .animation(Theme.Motion.respecting(reduceMotion, Theme.Motion.stepChange), value: app.arPhase)
     }
 
     @ViewBuilder private var zoom: some View {
         if showsZoom, let orbit = app.orbit {
             ZoomControl(orbit: orbit)
+        }
+    }
+
+    /// The step panel, or for a moment the "well done" card between parts of the build.
+    /// Tapping the card moves on at once.
+    @ViewBuilder private var stepOrMilestone: some View {
+        if let milestone = app.milestone {
+            MilestoneCard(milestone: milestone)
+                .contentShape(Rectangle())
+                .onTapGesture { app.next() }
+                .transition(.scale(scale: 0.94).combined(with: .opacity))
+        } else {
+            stepPanel
         }
     }
 
@@ -192,13 +206,13 @@ struct BuildScreen: View {
         } else if app.showingFinished {
             FinishedCard()
         } else {
-            stepPanel
+            stepOrMilestone
         }
         #else
         if app.showingFinished {
             FinishedCard()
         } else {
-            stepPanel
+            stepOrMilestone
         }
         #endif
     }
@@ -270,6 +284,22 @@ struct StepHeader: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+            // Which part of the build this is, so a switch to a sub-build is never a surprise.
+            Label(app.sectionTitle, systemImage: app.isSubBuild ? "square.on.square.dashed" : "shippingbox")
+                .eyebrowStyle()
+                .foregroundStyle(app.isSubBuild ? Theme.Palette.blue : Theme.Palette.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .contentTransition(.opacity)
+            stepNumber
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(app.sectionTitle). Step \(app.step + 1) of \(app.stepCount)")
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var stepNumber: some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.xs) {
             Text("Step")
                 .eyebrowStyle()
@@ -285,9 +315,6 @@ struct StepHeader: View {
                 .foregroundStyle(Theme.Palette.textSecondary)
         }
         .lineLimit(1)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(app.step + 1) of \(app.stepCount)")
-        .accessibilityAddTraits(.isHeader)
     }
 }
 

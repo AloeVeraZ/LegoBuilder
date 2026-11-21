@@ -1,13 +1,18 @@
 # BuildLens for the MicroLumin M6 glasses
 
 A small Android app (Android 9, 640×480, black = see-through) that shows the current
-building step: the green frame of the model with the new pieces filled in, the step number,
-the sub-build name and the pieces to add.
+building step the same way the phone does: the new piece waits just off its place while
+an arrow bounces towards where it goes, and moving on slots it in before the next piece
+appears. It also shows the step number, which part of the build you are on (main build or
+a sub-build) and the pieces to add.
 
 - **Next / back:** temple touchpad, ring, swipe or tap (arrow keys, Enter and media keys also work).
   Every key press is logged, so unknown buttons can be mapped: `adb logcat -s BuildLens`.
 - **Follows the iPhone app** over Wi-Fi. The glasses advertise `_buildlens-glass._tcp`; the
   iPhone app finds and connects to them automatically, and steps changed on either side show on both.
+
+> `dist/BuildLensGlasses.apk` has to be rebuilt (`./build.sh`) after the model or this app
+> changes; the frames it shows are packed inside it.
 
 ## Install
 

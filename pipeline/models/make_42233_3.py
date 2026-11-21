@@ -289,10 +289,12 @@ def push(direction, line):
     return "0 !PUSH " + " ".join(f"{v:g}" for v in direction) + "\n" + line
 
 def axle_pins(z, sides=("R", "L")):
-    """3749: axle end through the split block's arm into the cross block, pin end out for the wheel."""
+    """3749: the cross-shaped axle end goes through the split block's arm into the cross
+    block (both are axle holes); the round pin end stays out for the wheel to spin on.
+    In the part's own frame the axle end is +X and the pin end is -X."""
     out = []
-    if "R" in sides: out.append(push(FROM_RIGHT, ref(TAN, (20, AXLE_Y, z), SHAFT_X, "3749.dat")))
-    if "L" in sides: out.append(push(FROM_LEFT, ref(TAN, (-20, AXLE_Y, z), SHAFT_NX, "3749.dat")))
+    if "R" in sides: out.append(push(FROM_RIGHT, ref(TAN, (20, AXLE_Y, z), SHAFT_NX, "3749.dat")))
+    if "L" in sides: out.append(push(FROM_LEFT, ref(TAN, (-20, AXLE_Y, z), SHAFT_X, "3749.dat")))
     return out
 
 def seated_pin(z, hole_y=AXLE_Y):

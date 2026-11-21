@@ -22,7 +22,7 @@ final class BuildScene {
     private var shownStep = -2          // -1 = finished model
     private var token = 0               // invalidates pending animations when the step changes
     private var waiting: [Int: Transform] = [:]   // new pieces of the shown step, held off their place
-    private static let clickTime = 0.32
+    private static let clickTime = 0.5        // quick, but you see it travel and settle
 
     /// Show earlier pieces faded so the new ones stand out.
     var dimPrevious = false
@@ -123,6 +123,24 @@ final class BuildScene {
         bringIn(moves, local: local, animated: animated, after: wait)
         let arrival = moves.map(\.delay).max().map { wait + $0 + 0.55 } ?? 0
         placeArrows(for: moves, local: local, after: animated ? arrival : 0)
+    }
+
+    /// Slots the waiting pieces home without moving on (used before a "well done" moment).
+    func seatWaiting() {
+        guard shownStep >= 0, !waiting.isEmpty else { return }
+        token += 1
+        let local = model.assemblyMatrices[model.steps[shownStep].assembly.id].inverse
+        for (i, from) in waiting {
+            let entity = entities[i]
+            entity.stopAllAnimations()
+            entity.model?.materials = materials(for: model.package.instances[i], look: .normal)
+            entity.transform = from
+            _ = entity.move(to: Transform(matrix: local * model.instanceMatrices[i]), relativeTo: entity.parent,
+                            duration: Self.clickTime, timingFunction: .easeInOut)
+        }
+        waiting.removeAll()
+        for a in arrows { a.stopAllAnimations(); a.isEnabled = false }
+        clickWhenSeated()
     }
 
     /// The soft click, timed to the moment the piece reaches its seat.
@@ -412,7 +430,9 @@ final class BuildScene {
             }
             let gap = members.first?.gap ?? 0
             let reach = simd_dot(simd_abs(direction), (hi - lo) / 2)
-            let tip = (lo + hi) / 2 + direction * (gap + reach + size * 0.5)
+            // Keep the whole bounce clear of the piece: the tip never comes closer than
+            // half an arrow-length to it.
+            let tip = (lo + hi) / 2 + direction * (gap + reach + size * 1.0)
             if !spots.contains(where: { simd_distance($0.tip, tip) < size * 1.5 }) { spots.append((tip, direction)) }
         }
         for (k, arrow) in arrows.enumerated() {
@@ -426,7 +446,7 @@ final class BuildScene {
             arrow.transform = base
             arrow.isEnabled = delay <= 0
             var pressed = base
-            pressed.translation -= direction * size * 0.45
+            pressed.translation -= direction * size * 0.4
             let bob = FromToByAnimation<Transform>(
                 name: "bob",
                 from: base,

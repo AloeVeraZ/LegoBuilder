@@ -56,6 +56,9 @@ public class MainActivity extends Activity {
     private String setName = "";
     private int step = 0;
     private boolean finished = false;
+    private int shownStep = -1;          // what is on the display now (-1 = nothing yet)
+    private int animation = 0;           // bumped on every change so stale frames are dropped
+    private static final int BOUNCE_MS = 450, HALF_MS = 110, SEATED_MS = 320;
 
     private ImageView frame;
     private TextView header, sub, parts, status;
@@ -143,25 +146,67 @@ public class MainActivity extends Activity {
                 header.setText("DONE ✓");
                 sub.setText(setName.toUpperCase());
                 parts.setText("");
+                animation++;
+                shownStep = -1;
                 frame.setImageBitmap(null);
             } else {
                 JSONObject s = steps.getJSONObject(step);
                 header.setText("STEP " + (step + 1) + "/" + count);
-                sub.setText(s.optString("sub"));
+                String section = s.optString("sub");
+                sub.setText(section.isEmpty() ? "MAIN BUILD" : section);
                 JSONArray lines = s.getJSONArray("parts");
                 StringBuilder b = new StringBuilder();
                 for (int i = 0; i < lines.length() && i < 4; i++) b.append(lines.getString(i)).append('\n');
                 if (lines.length() > 4) b.append("+").append(lines.length() - 4).append(" MORE\n");
                 parts.setText(b.toString().trim());
-                try (InputStream in = getAssets().open(s.getString("frame"))) {
-                    Bitmap bmp = BitmapFactory.decodeStream(in);
-                    frame.setImageBitmap(bmp);
-                }
+                // show() also runs when the phone links or echoes a step back; only a real
+                // change of step restarts the animation.
+                if (step != shownStep) playStep(s.getString("frame"));
             }
         } catch (Exception e) {
             Log.e(TAG, "show", e);
         }
         status.setText(clients.isEmpty() ? "phone: not linked" : "phone: linked");
+    }
+
+    private void setFrame(String asset) {
+        try (InputStream in = getAssets().open(asset)) {
+            frame.setImageBitmap(BitmapFactory.decodeStream(in));
+        } catch (Exception e) {
+            Log.e(TAG, "frame " + asset, e);
+        }
+    }
+
+    private String variant(String asset, String suffix) {
+        return asset.replace(".png", suffix + ".png");
+    }
+
+    /**
+     * Shows a step the way the phone does: the new piece waits off its place while the
+     * arrow bounces. Coming from the step before, that step's piece first slots in
+     * (part-way, then seated) before the new one appears.
+     */
+    private void playStep(final String asset) {
+        final int run = ++animation;
+        int delay = 0;
+        if (step == shownStep + 1 && shownStep >= 0) {
+            try {
+                final String before = steps.getJSONObject(shownStep).getString("frame");
+                setFrame(variant(before, "-a"));
+                main.postDelayed(() -> { if (run == animation) setFrame(variant(before, "-b")); }, HALF_MS);
+                delay = HALF_MS + SEATED_MS;
+            } catch (Exception e) {
+                Log.e(TAG, "slot-in", e);
+            }
+        }
+        shownStep = step;
+        main.postDelayed(() -> bounce(asset, run, false), delay);
+    }
+
+    private void bounce(final String asset, final int run, final boolean pressed) {
+        if (run != animation) return;
+        setFrame(pressed ? variant(asset, "-w") : asset);
+        main.postDelayed(() -> bounce(asset, run, !pressed), BOUNCE_MS);
     }
 
     private void next(boolean fromHere) {

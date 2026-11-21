@@ -132,18 +132,102 @@ function snap(w, h, bg) {
   return renderer.domElement.toDataURL('image/png');
 }
 
+// How far off its place a new piece waits (same rule as the app).
+function waitingGap() {
+  const [lo, hi] = pkg.assemblies[0].bounds;
+  return Math.max(Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 * 0.28, 0.012);
+}
+
+// Bounds of some pieces in the shown assembly's axes.
+function boundsOf(ids, local) {
+  const box = new THREE.Box3();
+  for (const id of ids) {
+    const inst = pkg.instances[id];
+    const [lo, hi] = pkg.parts[inst.part].bounds;
+    box.union(new THREE.Box3(new THREE.Vector3(...lo), new THREE.Vector3(...hi)).applyMatrix4(local.clone().multiply(mat4(inst.matrix))));
+  }
+  return box;
+}
+
+// Arrow whose tip sits just outside the waiting pieces, pointing the way they are pushed.
+function addArrow(box, push, size, pressed, colour) {
+  const half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  const reach = Math.abs(push.x) * half.x + Math.abs(push.y) * half.y + Math.abs(push.z) * half.z;
+  const tip = box.getCenter(new THREE.Vector3()).addScaledVector(push, -(reach + size * (pressed ? 0.25 : 0.7)));
+  const mat = new THREE.MeshBasicMaterial({ color: colour });
+  const arrow = new THREE.Group();
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.3 * size, 0.6 * size, 24), mat);
+  head.rotation.x = Math.PI; head.position.y = 0.3 * size;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.1 * size, 0.1 * size, 0.8 * size, 16), mat);
+  shaft.position.y = size;
+  arrow.add(head, shaft);
+  arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), push);
+  arrow.position.copy(tip);
+  root.add(arrow);
+  return tip;
+}
+
+// Bounds to frame for each step: steps are grouped into runs that end when the build is
+// nearly twice the size it was at the run's start; a run is framed on how it looks at its end.
+let stageCache = null;
+function stageBounds(stepIndex) {
+  if (!stageCache) {
+    stageCache = [];
+    const whole = (() => { const [lo, hi] = pkg.assemblies[0].bounds; return Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2; })();
+    const byAssembly = new Map();
+    pkg.steps.forEach((st, k) => { if (!byAssembly.has(st.assembly)) byAssembly.set(st.assembly, []); byAssembly.get(st.assembly).push(k); });
+    for (const [asmId, ks] of byAssembly) {
+      const local = mat4(pkg.assemblies[asmId].matrix).invert();
+      const seen = [];
+      const boxes = ks.map(k => { seen.push(...pkg.steps[k].added); return boundsOf(seen, local); });
+      const radius = n => boxes[n].getSize(new THREE.Vector3()).length() / 2;
+      for (let start = 0; start < ks.length;) {
+        const limit = Math.max(radius(start), whole * 0.3) * 1.8;
+        let end = start;
+        while (end + 1 < ks.length && radius(end + 1) <= limit) end++;
+        const b = [boxes[end].min.toArray(), boxes[end].max.toArray()];
+        for (let n = start; n <= end; n++) stageCache[ks[n]] = b;
+        start = end + 1;
+      }
+    }
+  }
+  return stageCache[stepIndex];
+}
+
 // One build step. mode: 'preview' (colour, new parts glow) or 'hud' (green-on-black for the glasses).
-BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview' } = {}) {
+// lift: 1 = the new pieces wait off their place with an arrow (how a step is shown),
+// 0 = seated, anything between = part-way in. pressed: the arrow at the low point of its bounce.
+BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview', lift = 0, pressed = false } = {}) {
   const hud = mode === 'hud';
   makeScene(hud);
   const { asm, added, visible } = cumulative(stepIndex);
   const local = mat4(asm.matrix).invert();
+  const gap = waitingGap();
+  const offset = new Map();           // piece id -> how far it is from its seat
+  const moves = (pkg.steps[stepIndex].moves || []).map(m => ({ pieces: m.pieces, push: new THREE.Vector3(...m.push).normalize() }));
+  if (lift > 0) for (const m of moves) for (const id of m.pieces) offset.set(id, m.push.clone().multiplyScalar(-gap * lift));
   for (const id of visible) {
     const isNew = added.has(id);
-    if (hud) addInstance(id, isNew ? 'hud-new' : 'hud-old', local, true, isNew ? 0xb6ffc8 : 0x1f9c3c);
-    else addInstance(id, isNew ? 'new' : 'normal', local, false);
+    const at = offset.has(id) ? new THREE.Matrix4().makeTranslation(offset.get(id)).multiply(local) : local;
+    if (hud) addInstance(id, isNew ? 'hud-new' : 'hud-old', at, true, isNew ? 0xb6ffc8 : 0x1f9c3c);
+    else addInstance(id, isNew ? 'new' : 'normal', at, false);
   }
-  frame(asm.bounds, w, h, undefined, hud ? 0.92 : 1.12);
+  // The camera stays put for a run of steps and only pulls back when the build has
+  // outgrown the view (same rule as the app); the frame leaves room for waiting pieces.
+  const view = hud ? stageBounds(stepIndex) : asm.bounds;
+  const lo = view[0].map(v => v - gap), hi = view[1].map(v => v + gap);
+  if (lift >= 1) {
+    const size = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 * 0.13;
+    const tips = [];
+    for (const m of moves) {
+      const box = boundsOf(m.pieces, local).translate(m.push.clone().multiplyScalar(-gap));
+      const centre = box.getCenter(new THREE.Vector3());
+      if (tips.some(t => t.distanceTo(centre) < size * 1.5)) continue;     // rim and tyre share one arrow
+      tips.push(centre);
+      addArrow(box, m.push, size, pressed, hud ? 0xd9ffe2 : 0xdb1f26);
+    }
+  }
+  frame([lo, hi], w, h, undefined, hud ? 0.98 : 1.12);
   return snap(w, h, hud ? 0x000000 : 0xf3f4f6);
 };
 

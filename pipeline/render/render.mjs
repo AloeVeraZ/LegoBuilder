@@ -47,12 +47,21 @@ if (want('--thumbs')) {
   console.log(`thumbs: ${pairs.length}`);
 }
 if (want('--previews')) {
-  for (const s of stepList) save(path.join(buildDir, 'previews'), `step-${String(s + 1).padStart(3, '0')}.png`, await page.evaluate(s => BL.step(s), s));
+  for (const s of stepList) save(path.join(buildDir, 'previews'), `step-${String(s + 1).padStart(3, '0')}.png`, await page.evaluate(s => BL.step(s, { lift: 1 }), s));
   console.log(`previews: ${stepList.length}`);
 }
 if (want('--hud')) {
-  for (const s of stepList) save(path.join(buildDir, 'hud'), `step-${String(s + 1).padStart(3, '0')}.png`, await page.evaluate(s => BL.step(s, { w: 640, h: 480, mode: 'hud' }), s));
-  console.log(`hud frames: ${stepList.length}`);
+  // Four frames per step for the glasses: the piece waiting with its arrow (the step's
+  // picture), the same with the arrow at the bottom of its bounce (-w), then part-way in
+  // (-a) and seated (-b), which play when the wearer moves on.
+  const variants = [['', { lift: 1 }], ['-w', { lift: 1, pressed: true }], ['-a', { lift: 0.45 }], ['-b', { lift: 0 }]];
+  for (const s of stepList) {
+    for (const [suffix, opts] of variants) {
+      save(path.join(buildDir, 'hud'), `step-${String(s + 1).padStart(3, '0')}${suffix}.png`,
+        await page.evaluate(([s, opts]) => BL.step(s, { w: 640, h: 480, mode: 'hud', ...opts }), [s, opts]));
+    }
+  }
+  console.log(`hud frames: ${stepList.length} steps x ${variants.length}`);
 }
 if (want('--hero')) {
   save(buildDir, 'hero.png', await page.evaluate(() => BL.finished()));

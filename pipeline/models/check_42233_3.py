@@ -32,6 +32,10 @@ HOLES = {
     "7451": [((20.5, 0, -30), X, "hinge boss"), ((20, 0, -10), Z, "joining boss")],
     "42610": [((0, 0, 0), Z, "hub")],
 }
+# Holes that are cross-shaped (take an axle, not a round pin).
+AXLE_HOLES = {("32184", "end axle hole"), ("92907", "arm hole"), ("92907", "arm hole, 2nd row"),
+              ("63869", "lug axle hole"), ("32140", "axle hole"), ("7944", "axle hole"),
+              ("7450", "hinge boss"), ("7450", "joining boss"), ("7451", "hinge boss"), ("7451", "joining boss")}
 # Shafts: extent along the part's own X axis, and how many holes each must pass through.
 SHAFTS = {
     "3673": (-20, 20, 2, "pin"),
@@ -73,6 +77,15 @@ def main():
             if abs(np.dot(h["axis"], direction)) > 0.99 and off < 0.6 and lo - 0.6 <= along <= hi + 0.6:
                 h["used"] += 1
                 through.append(f"{h['part']} {h['label']}")
+                # Shapes must match: a round pin end cannot go into a cross-shaped axle hole,
+                # and the axle pin's cross-shaped end (its +X half) belongs in one.
+                cross_hole = (h["part"], h["label"]) in AXLE_HOLES
+                round_end = number in ("3673", "32002") or (number == "3749" and along < -0.6)
+                cross_end = number == "3749" and along > 0.6
+                if round_end and cross_hole:
+                    problems.append(f"round end of {name} at piece {i} is in a cross-shaped hole ({h['part']} {h['label']})")
+                if cross_end and not cross_hole:
+                    problems.append(f"axle end of {name} at piece {i} is in a round hole ({h['part']} {h['label']})")
         pos = "(" + ", ".join(f"{v:g}" for v in np.round(origin, 1)) + ")"
         print(f"{name:<10}{pos:<22}{'; '.join(through) or 'NOTHING'}")
         if len(through) < (need or 2):

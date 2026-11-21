@@ -27,7 +27,7 @@ struct BuildPanel: View {
             }
 
             if let step = app.currentStep {
-                PartsStrip(lines: step.parts, subAssembly: step.isSubAssembly ? step.assembly : nil)
+                PartsStrip(lines: step.parts, subAssembly: nil)      // the step header names the sub-build
             }
 
             controls

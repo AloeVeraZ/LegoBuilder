@@ -25,6 +25,23 @@ final class AppModel {
     private(set) var syncPeers: [String] = []
     private(set) var glassesConnected = false
 
+    /// A short "well done" between parts of the build (a sub-build finished, or the next
+    /// one about to start). Shown for a moment, then the build moves on by itself.
+    struct Milestone: Equatable {
+        let title: String
+        let detail: String
+    }
+    private(set) var milestone: Milestone?
+    private var milestoneTask: Task<Void, Never>?
+
+    /// What the current step is part of: the main build, or a sub-build made on the side.
+    var sectionTitle: String {
+        guard let current = currentStep, current.isSubAssembly else { return "Main build" }
+        let name = current.assembly.name
+        return current.assembly.uses > 1 ? "Sub-build · \(name) ×\(current.assembly.uses)" : "Sub-build · \(name)"
+    }
+    var isSubBuild: Bool { currentStep?.isSubAssembly ?? false }
+
     var focusMode = false {
         didSet {
             scene?.dimPrevious = focusMode
@@ -116,11 +133,62 @@ final class AppModel {
     }
 
     func next() {
-        if step + 1 < stepCount { go(to: step + 1) } else { finish() }
+        // Next during the "well done" moment skips the wait.
+        if milestone != nil { return advancePastMilestone() }
+        guard step + 1 < stepCount else { return finish() }
+        if let milestone = milestone(after: step) {
+            celebrate(milestone)
+        } else {
+            go(to: step + 1)
+        }
     }
 
     func back() {
-        if showingFinished { go(to: step, force: true) } else if step > 0 { go(to: step - 1) }
+        if milestone != nil {
+            clearMilestone()
+            go(to: step, force: true)
+        } else if showingFinished {
+            go(to: step, force: true)
+        } else if step > 0 {
+            go(to: step - 1)
+        }
+    }
+
+    /// The message for leaving `index`, if the next step belongs to a different part of the build.
+    private func milestone(after index: Int) -> Milestone? {
+        guard let model, index + 1 < model.steps.count else { return nil }
+        let here = model.steps[index], coming = model.steps[index + 1]
+        guard here.assembly.id != coming.assembly.id else { return nil }
+        if here.isSubAssembly {
+            let detail = here.assembly.uses > 1
+                ? "Make \(here.assembly.uses) of these. Then they go on the truck."
+                : "Nice work. Now it goes on the truck."
+            return Milestone(title: "\(here.assembly.name) done!", detail: detail)
+        }
+        return Milestone(title: "Good job!", detail: "Set this part aside. Next: the \(coming.assembly.name.lowercased()).")
+    }
+
+    private func celebrate(_ message: Milestone) {
+        scene?.seatWaiting()
+        milestone = message
+        Haptics.success()
+        if readAloud { speaker.say("\(message.title) \(message.detail)") }
+        milestoneTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_900_000_000)
+            guard let self, !Task.isCancelled, self.milestone != nil else { return }
+            self.advancePastMilestone()
+        }
+    }
+
+    private func advancePastMilestone() {
+        clearMilestone()
+        go(to: step + 1)
+    }
+
+    private func clearMilestone() {
+        milestoneTask?.cancel()
+        milestoneTask = nil
+        milestone = nil
     }
 
     func replay() {
@@ -143,6 +211,7 @@ final class AppModel {
 
     func go(to index: Int, broadcast: Bool = true, force: Bool = false) {
         guard let model, index >= 0, index < model.steps.count else { return }
+        clearMilestone()
         let changed = index != step || showingFinished
         step = index
         showingFinished = false

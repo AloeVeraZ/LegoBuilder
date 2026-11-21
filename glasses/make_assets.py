@@ -20,7 +20,11 @@ for i, s in enumerate(pkg["steps"]):
     asm = pkg["assemblies"][s["assembly"]]
     sub = "" if asm["id"] == 0 else f"SUB: {asm['name'].upper()}" + (f" x{asm['uses']}" if asm["uses"] > 1 else "")
     name = f"hud-step-{i + 1:03d}.png"
-    shutil.copy(os.path.join(data, "hud", name), os.path.join(out, "hud", name))
+    # The step's picture (piece waiting, arrow up), the arrow at the bottom of its bounce,
+    # then part-way in and seated for when the wearer moves on.
+    for suffix in ("", "-w", "-a", "-b"):
+        variant = name.replace(".png", suffix + ".png")
+        shutil.copy(os.path.join(data, "hud", variant), os.path.join(out, "hud", variant))
     steps.append({"frame": f"hud/{name}", "sub": sub,
                   "parts": [f"+{n} {colours.get(c, '').upper()} {clean(pkg['parts'][p]['name']).upper()}" for (p, c), n in lines]})
 json.dump({"name": pkg["set"]["name"], "steps": steps}, open(os.path.join(out, "steps.json"), "w"))

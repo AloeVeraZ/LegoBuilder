@@ -76,6 +76,29 @@ struct RevealCard: View {
     }
 }
 
+/// A moment of "well done" when one part of the build is finished and the next begins.
+struct MilestoneCard: View {
+    let milestone: AppModel.Milestone
+
+    var body: some View {
+        VStack(spacing: Theme.Spacing.sm) {
+            CardMark(symbol: "checkmark", tint: Theme.Palette.green)
+            VStack(spacing: Theme.Spacing.xxs) {
+                Text(milestone.title)
+                    .font(Theme.Typography.title)
+                    .foregroundStyle(Theme.Palette.textPrimary)
+                Text(milestone.detail)
+                    .font(Theme.Typography.body)
+                    .foregroundStyle(Theme.Palette.textSecondary)
+            }
+            .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .floatingCard()
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// Shown after the last step.
 struct FinishedCard: View {
     @Environment(AppModel.self) private var app
