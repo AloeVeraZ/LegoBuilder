@@ -111,6 +111,9 @@ final class BuildModel {
         let assembly: BuildPackage.Assembly
         let added: [Int]
         let moves: [BuildPackage.Move]
+        /// Sub-builds that go onto the model in this step. When there are any, the step is
+        /// "attach what you just built", not "add these loose pieces".
+        let attaches: [BuildPackage.Assembly]
         /// Everything on screen for this step (pieces added so far in the same assembly).
         let visible: [Int]
         let parts: [PartLine]
@@ -137,19 +140,36 @@ final class BuildModel {
         assemblyMatrices = package.assemblies.map { simd_float4x4(columnMajor: $0.matrix) }
         coloursByCode = Dictionary(package.colours.map { ($0.code, $0) }, uniquingKeysWith: { a, _ in a })
 
+        // The pieces each sub-build is made of, from its own steps.
+        var builtInSub: [Int: Set<Int>] = [:]
+        for step in package.steps where step.assembly != 0 {
+            builtInSub[step.assembly, default: []].formUnion(step.added)
+        }
         var visibleByAssembly: [Int: [Int]] = [:]
         var built: [StepInfo] = []
         for (index, step) in package.steps.enumerated() {
             var visible = visibleByAssembly[step.assembly] ?? []
             visible.append(contentsOf: step.added)
             visibleByAssembly[step.assembly] = visible
+            // A step that brings in every piece of a sub-build is attaching that sub-build.
+            let added = Set(step.added)
+            let attaches = builtInSub.keys.sorted()
+                .filter { $0 != step.assembly && builtInSub[$0]!.isSubset(of: added) }
+                .map { package.assemblies[$0] }
+            var loose = added
+            for sub in attaches {
+                // All copies of the sub-build come in together; none of their pieces are loose.
+                let size = builtInSub[sub.id]!.count * max(sub.uses, 1)
+                loose = size >= added.count ? [] : loose.subtracting(builtInSub[sub.id]!)
+            }
             built.append(StepInfo(
                 index: index,
                 assembly: package.assemblies[step.assembly],
                 added: step.added,
                 moves: step.moves ?? [],
+                attaches: attaches,
                 visible: visible,
-                parts: partLines(for: step.added)
+                parts: partLines(for: step.added.filter(loose.contains))
             ))
         }
         steps = built
@@ -267,6 +287,9 @@ final class BuildModel {
         if step.isSubAssembly {
             text += "Build the \(step.assembly.name)"
             text += step.assembly.uses > 1 ? ", you need \(step.assembly.uses) of these. " : ". "
+        }
+        for sub in step.attaches {
+            text += sub.uses > 1 ? "Attach both \(sub.name) sub-builds. " : "Attach the \(sub.name). "
         }
         let lines = step.parts.prefix(4).map { line -> String in
             let name = line.name.replacingOccurrences(of: " x ", with: " by ")

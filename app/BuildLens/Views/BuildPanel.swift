@@ -30,7 +30,7 @@ struct BuildPanel: View {
             }
 
             if let step = app.currentStep {
-                PartsStrip(lines: step.parts, subAssembly: nil)      // the step header names the sub-build
+                PartsStrip(lines: step.parts, attaches: step.attaches)
             }
 
             controls
@@ -77,28 +77,30 @@ struct BuildPanel: View {
     }
 }
 
-/// "Sub-assembly: Cab ×2": this step builds a part of the model on the side.
-private struct SubAssemblyChip: View {
+/// A finished sub-build as one tile in the parts strip: this step attaches it whole.
+private struct SubBuildCell: View {
     let assembly: BuildPackage.Assembly
 
     var body: some View {
-        HStack(spacing: Theme.Spacing.xxs) {
-            Image(systemName: "square.on.square.dashed")
-            Text("Sub-assembly: \(assembly.name)")
-            if assembly.uses > 1 {
-                Text("×\(assembly.uses)")
-                    .monospacedDigit()
+        Image(systemName: "square.on.square.dashed")
+            .font(.title.weight(.semibold))
+            .foregroundStyle(Theme.Palette.ink)
+            .frame(width: Theme.Size.partTile, height: Theme.Size.partTile)
+            .background(Theme.Palette.blue, in: Theme.shape(Theme.Radius.tile))
+            .overlay(alignment: .bottomTrailing) {
+                if assembly.uses > 1 {
+                    Text("\(assembly.uses)×")
+                        .font(.caption.weight(.bold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.Palette.ink)
+                        .padding(.horizontal, Theme.Spacing.xs)
+                        .frame(minHeight: Theme.Size.chip)
+                        .background(Theme.Palette.yellow, in: Capsule())
+                        .offset(x: Theme.Spacing.xxs, y: Theme.Spacing.xxs)
+                }
             }
-        }
-        .font(.caption.weight(.bold))
-        .lineLimit(1)
-        .minimumScaleFactor(0.8)
-        .foregroundStyle(Theme.Palette.ink)
-        .padding(.horizontal, Theme.Spacing.xs)
-        .frame(minHeight: Theme.Size.chip)
-        .background(Theme.Palette.blue, in: Capsule())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(assembly.uses > 1 ? "Sub-assembly: \(assembly.name), build \(assembly.uses)" : "Sub-assembly: \(assembly.name)")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(assembly.uses > 1 ? "\(assembly.uses) \(assembly.name) sub-builds" : "\(assembly.name) sub-build")
     }
 }
 
@@ -106,10 +108,17 @@ private struct SubAssemblyChip: View {
 struct PartsStrip: View {
     @Environment(AppModel.self) private var app
     let lines: [BuildModel.PartLine]
-    var subAssembly: BuildPackage.Assembly?
+    /// Sub-builds that go on in this step, shown as one tile each instead of their pieces.
+    var attaches: [BuildPackage.Assembly] = []
     @State private var selected: BuildModel.PartLine?
 
     private var pieceCount: Int { lines.reduce(0) { $0 + $1.count } }
+
+    private var heading: String {
+        guard let sub = attaches.first else { return pieceCount == 1 ? "Add 1 piece" : "Add \(pieceCount) pieces" }
+        let what = sub.uses > 1 ? "Attach both sub-builds" : "Attach the sub-build"
+        return pieceCount == 0 ? what : "\(what) + \(pieceCount) more"
+    }
 
     /// The part whose name is spelled out under the strip: the one picked, else the first.
     private var described: BuildModel.PartLine? { selected ?? lines.first }
@@ -118,19 +127,19 @@ struct PartsStrip: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
             // Always as tall as the chip, so the panel keeps its height from step to step.
             HStack(spacing: Theme.Spacing.xs) {
-                Text(pieceCount == 1 ? "Add 1 piece" : "Add \(pieceCount) pieces")
+                Text(heading)
                     .eyebrowStyle()
                     .foregroundStyle(Theme.Palette.textSecondary)
                     .layoutPriority(1)
                 Spacer(minLength: 0)
-                if let subAssembly {
-                    SubAssemblyChip(assembly: subAssembly)
-                }
             }
             .frame(minHeight: Theme.Size.chip)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Theme.Spacing.xs) {
+                    ForEach(attaches, id: \.id) { sub in
+                        SubBuildCell(assembly: sub)
+                    }
                     ForEach(lines) { line in
                         Button {
                             selected = line
@@ -146,12 +155,16 @@ struct PartsStrip: View {
             }
             .scrollClipDisabled()
 
-            if let line = described {
-                Text("\(line.count)× \(line.name) · \(line.colourName)")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                    .lineLimit(1)
+            Group {
+                if let line = described {
+                    Text("\(line.count)× \(line.name) · \(line.colourName)")
+                } else if let sub = attaches.first {
+                    Text(sub.uses > 1 ? "\(sub.uses)× \(sub.name), the ones you just built" : "The \(sub.name) you just built")
+                }
             }
+            .font(Theme.Typography.caption)
+            .foregroundStyle(Theme.Palette.textPrimary)
+            .lineLimit(1)
         }
         .sensoryFeedback(.selection, trigger: selected)
         .onChange(of: app.step) { _, _ in selected = nil }

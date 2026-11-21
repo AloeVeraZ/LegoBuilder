@@ -377,7 +377,7 @@ def wheel(side_x, z, part, colour, row, still):
     return push(way, ref(colour, (side_x, AXLE_Y, z), turn, part), order=row, still=still)
 
 main = model("42233-3 Dump Truck.ldr", rear + [
-    [push(DOWN, ref(16, (0, 0, 0), I, "Front Unit.ldr"))],                                       # 13
+    [push(DOWN, ref(16, (0, 0, 0), I, "Front Unit.ldr"), gap=50)],                               # 13 (held well clear)
     [push(FROM_FRONT, ref(16, CAB_FRONT, I, "Cab.ldr"))],                                        # 16 (after cab sub-build)
     [push(FROM_BEHIND, ref(YEL, CAB_REAR, BEHIND, "7944.dat"))],                                 # 17
     [push(DOWN, ref(YEL, LBEAM_POS, LBEAM, "32140.dat")),

@@ -33,7 +33,7 @@
 1 71 0 -29 -20 -0 1 0 -1 0 0 -0 0 1 3673.dat
 0 STEP
 
-0 !PUSH 0 1 0
+0 !PUSH 0 1 0 GAP 50
 1 16 0 0 0 1 0 0 0 1 0 0 0 1 Front Unit.ldr
 0 STEP
 
