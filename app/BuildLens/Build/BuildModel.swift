@@ -246,6 +246,8 @@ final class BuildModel {
     static func cleanName(_ raw: String) -> String {
         var s = raw
         while let first = s.first, "~_=|".contains(first) { s.removeFirst() }
+        // Pieces are named for BuildLens, not by the toy maker's brand names.
+        for brand in ["Technic", "TECHNIC", "LEGO", "Lego"] { s = s.replacingOccurrences(of: brand, with: "BuildLens") }
         return s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 

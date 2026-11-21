@@ -10,7 +10,7 @@ sections below were written before the glasses arrived and are out of date where
 disagree with this list; `glasses/README.md` is the current description of the glasses app.
 
 - The glasses app **runs on the real M6**. Flow: scan the set's box (phone), scan the
-  phone's code with the glasses, then the green LEGO sits in the middle of the view and
+  phone's code with the glasses, then the green BuildLens sits in the middle of the view and
   follows the head (`GhostView.FOLLOW_VIEW`). Tap = next, double tap = back, triple tap =
   flicks zoom, flick = turn, hold = menu (fade, read aloud, voice, scan again, replay).
 - **No Wi-Fi is needed.** The Mac is the bridge: glasses over USB (`adb forward`, ports
@@ -29,9 +29,9 @@ disagree with this list; `glasses/README.md` is the current description of the g
 
 ## What this is
 
-BuildLens shows LEGO building instructions in 3D on an iPhone and on **MicroLumin M6**
+BuildLens shows BuildLens building instructions in 3D on an iPhone and on **MicroLumin M6**
 smart glasses (Android 9, 640×480 single-colour green waveguide display; black = see-through).
-Demo set: LEGO Technic **42233-3 Dump Truck** (23 steps; the box says 46 pieces, the model
+Demo set: BuildLens Technic **42233-3 Dump Truck** (23 steps; the box says 46 pieces, the model
 has 45 instances and the app shows 46 on purpose). It is a hackathon project ("Worn",
 City Tech NYC, team Superpog).
 
@@ -52,7 +52,7 @@ City Tech NYC, team Superpog).
   only its arrow bounces; a piece goes in over about half a second; motion only straight
   down or straight in from a side (90° only); nothing clips through anything; no click sound.
 - The model must be physically right (pins seated, shapes match holes) and look like the
-  real LEGO set.
+  real BuildLens set.
 - No skip button on the phone's box scan; no Start over on the glasses; the phone's pinch
   and pan are right as they are.
 - AR cannot run in the simulator, so AR changes are only ever verified on the real iPhone.
@@ -96,7 +96,7 @@ Commits end with `Co-Authored-By: ...` for the model that wrote them.
 **Model pipeline** (`pipeline/`)
 - `models/make_42233_3.py` generates the LDraw `.mpd`. Layout is derived from how the parts
   connect, not placed by eye. Custom meta `0 !PUSH x y z [ORDER n] [STILL] [GAP n]` before a
-  part says which way it goes in. Colours are overridden to match LEGO's photos.
+  part says which way it goes in. Colours are overridden to match BuildLens's photos.
 - Four parts are hand-modelled because they are not in LDraw: bed panels 7450/7451, cab half
   7944, and the tyre 50951. They are close to the real set but not mould-exact; the bed's
   ends and underside are the weakest. The user accepted the current look but may ask for more.

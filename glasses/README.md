@@ -24,13 +24,13 @@ a sub-build) and the pieces to add.
   once phone and glasses are linked over Wi-Fi). Look so the code sits in the circle and
   tap (any tap counts while scanning): that finds the phone and lines the camera up with
   this wearer's eye in one go. With no tap for two minutes the scan starts again by itself.
-- **Build.** The green LEGO sits in the middle of the view and follows the head
+- **Build.** The green model sits in the middle of the view and follows the head
   (GhostView.FOLLOW_VIEW; the phone's code is still tracked, for putting it on the table
   later). Each new step turns it to the side the phone app shows that step from. The step
-  picture hides while the LEGO shows; the step's words stay.
+  picture hides while the model shows; the step's words stay.
 - **Controls** (touchpad; it reports only finished gestures, never fingers or position):
   tap = next step, double tap = back (the M6 sends its double tap as F12 and then a Back
-  key of its own, which is ignored), quick flick forward/back = turn the LEGO a quarter
+  key of its own, which is ignored), quick flick forward/back = turn the model a quarter
   turn, triple tap = flicks zoom instead (back to turning after 5 s without a flick),
   hold = the menu (a slow slide also reads as a hold). A tap the touchpad adds at the end
   or start of a flick is ignored. Back never leaves the app.
@@ -40,7 +40,7 @@ a sub-build) and the pieces to add.
   cable (USBLink, through macOS's usbmuxd); the Mac talks to the glasses over USB (adb).
 - **Menu**: Fade built pieces, Read steps aloud, Voice (the phone's settings: a change on
   either goes to the other), Scan phone again, Replay step. No Start over on the glasses.
-  Swipe to move, tap to switch or do, double tap to go back to the LEGO; it closes by
+  Swipe to move, tap to switch or do, double tap to go back to the model; it closes by
   itself after 20 s, and opening it stops the voice.
 - **Sound.** The M6 clicks on every touchpad gesture (the system does it, on the media
   channel). While BuildLens is open that channel is muted and put back afterwards; Read

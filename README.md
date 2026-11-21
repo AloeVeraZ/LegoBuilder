@@ -5,7 +5,7 @@ The model appears in AR on your table, each step's new pieces fly into place und
 bouncing arrow, and the pieces you need are listed with pictures and counts.
 The same app runs on the Mac, and the two stay on the same step.
 
-Hackathon demo set: **LEGO Technic 42233-3 Dump Truck** (Mighty Machines Series 1, 46 pieces).
+Hackathon demo set: **BuildLens 42233-3 Dump Truck** (Mighty Machines Series 1, 46 pieces).
 
 ## Install
 
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/AloeVeraZ/LegoBuilder/main/install.
 `scripts/make-release.sh <version>` builds the release files (Mac zip with the glasses app
 inside, the glasses APK, checksums, notes) into `release/`.
 
-> The 3D model (`pipeline/models/make_42233_3.py`) follows LEGO's official instruction sheet
+> The 3D model (`pipeline/models/make_42233_3.py`) follows the set's official instruction sheet
 > for 42233 (sheet 3 of 8 on lego.com): the same 23 steps in the same order, with the same
 > sub-builds (front unit 7–12, cab 14–15, tipper-bed half 19–21 ×2). Three new 2026 parts
 > that the LDraw library doesn't have yet (the two cab halves, 7944, and the tipper-bed

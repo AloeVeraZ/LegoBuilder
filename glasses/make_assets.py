@@ -7,7 +7,8 @@ out = os.path.join(here, "assets")
 shutil.rmtree(out, ignore_errors=True)
 os.makedirs(os.path.join(out, "hud"))
 pkg = json.load(open(os.path.join(data, "build.json")))
-clean = lambda s: re.sub(r"\s+", " ", s.lstrip("~_=|")).strip()
+# Pieces are named for BuildLens, not by the toy maker's brand names.
+clean = lambda s: re.sub(r"\s+", " ", re.sub(r"\b(Technic|TECHNIC|LEGO|Lego)\b", "BuildLens", s.lstrip("~_=|"))).strip()
 colours = {c["code"]: c["name"] for c in pkg["colours"]}
 # The pieces each sub-build is made of, to tell "attach what you built" from "add these".
 built_in_sub = {}
