@@ -28,20 +28,26 @@ const finder = fs.readFileSync(path.join(here, '../../glasses/src/com/buildlens/
 const marker = [...finder.split('PICTURE = {')[1].split('};')[0].matchAll(/"([.#]+)"/g)].map(m => m[1]);
 
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.bin': 'application/octet-stream' };
+// Serves the renderer's page and the build package to the headless browser: this Mac only,
+// and nothing outside those two folders.
 const server = http.createServer((req, res) => {
-  const url = decodeURIComponent(req.url.split('?')[0]);
-  const file = url.startsWith('/data/') ? path.join(buildDir, url.slice(6)) : path.join(here, url);
-  fs.readFile(file, (err, data) => {
+  let url;
+  try { url = decodeURIComponent(req.url.split('?')[0]); } catch { res.writeHead(400); res.end(); return; }
+  const data = url.startsWith('/data/');
+  const root = data ? buildDir : here;
+  const file = path.resolve(root, '.' + (data ? url.slice(5) : url));
+  if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
+  fs.readFile(file, (err, body) => {
     if (err) { res.writeHead(404); res.end(); return; }
     res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' });
-    res.end(data);
+    res.end(body);
   });
-}).listen(0);
+}).listen(0, '127.0.0.1');
 const browser = await chromium.launch({ executablePath: process.env.BL_CHROMIUM || undefined,
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage();
 page.on('pageerror', e => console.error('page error:', e.message));
-await page.goto(`http://localhost:${server.address().port}/page/index.html`);
+await page.goto(`http://127.0.0.1:${server.address().port}/page/index.html`);
 await page.waitForFunction(() => window.BL);
 const info = await page.evaluate(() => BL.load('/data'));
 

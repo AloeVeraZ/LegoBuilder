@@ -109,15 +109,26 @@ def ref_path(n: int, which: str, view: int, elev: int = DEFAULT_ELEV, refs: Path
     return Path(refs) / f'step-{n:03d}-{which}-y{view}-e{elev}.png'
 
 
+MAX_PIXELS = 4096 * 4096      # bigger pictures are refused before they are decoded
+
+
 def encode(image, size: int = 768) -> str:
     """A picture (path, bytes or PIL image) as base64 JPEG, longest side at most `size`."""
     from PIL import Image, ImageOps
-    if isinstance(image, (str, Path)):
-        im = Image.open(image)
-    elif isinstance(image, (bytes, bytearray)):
-        im = Image.open(io.BytesIO(image))
-    else:
-        im = image
+    Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+    try:
+        if isinstance(image, (str, Path)):
+            im = Image.open(image)
+        elif isinstance(image, (bytes, bytearray)):
+            im = Image.open(io.BytesIO(image))
+        else:
+            im = image
+    except Image.DecompressionBombError as e:
+        raise ValueError(f'picture too big: {e}') from None
+    if im.size[0] * im.size[1] > MAX_PIXELS:
+        raise ValueError(f'picture too big ({im.size[0]} x {im.size[1]}); at most {MAX_PIXELS} pixels')
+    if im.format == 'JPEG':
+        im.draft('RGB', (size, size))          # decode a JPEG straight at about the size needed
     im = ImageOps.exif_transpose(im)
     if im.mode in ('RGBA', 'LA', 'P'):
         im = im.convert('RGBA')
