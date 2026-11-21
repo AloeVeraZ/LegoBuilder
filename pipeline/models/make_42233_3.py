@@ -89,15 +89,47 @@ def bar(a, b, half_w=5, half_t=4):
     nx, ny = -dy / ln * half_t, dx / ln * half_t
     return prism([(ax + nx, ay + ny), (bx + nx, by + ny), (bx - nx, by - ny), (ax - nx, ay - ny)], -half_w, half_w)
 
+def prism_x(profile_yz, x0, x1, colour=16):
+    """Extrude a convex (y, z) polygon along X."""
+    out = []
+    n = len(profile_yz)
+    a = [(x0, y, z) for y, z in profile_yz]
+    b = [(x1, y, z) for y, z in profile_yz]
+    for i in range(n):
+        j = (i + 1) % n
+        out.append(f"4 {colour} " + " ".join(f"{c:g}" for p in (a[i], a[j], b[j], b[i]) for c in p))
+    for k in range(1, n - 1):
+        out.append(f"3 {colour} " + " ".join(f"{c:g}" for p in (a[0], a[k], a[k + 1]) for c in p))
+        out.append(f"3 {colour} " + " ".join(f"{c:g}" for p in (b[0], b[k + 1], b[k]) for c in p))
+    return out
+
+def cross_mark(cx, cy, z):
+    """Black axle-hole cross drawn on a face at depth z (facing -Z)."""
+    out = []
+    for (w, h) in ((8, 2.4), (2.4, 8)):
+        out.append(f"4 0 {cx - w:g} {cy - h:g} {z:g} {cx + w:g} {cy - h:g} {z:g} {cx + w:g} {cy + h:g} {z:g} {cx - w:g} {cy + h:g} {z:g}")
+    return out
+
+# 7944: thin 1x3 beam at the front (axle-pin-axle holes, axis Z) plus half of the cab shell:
+# a hood sloping up and back, a flat roof, and side frames with a window.
 frame = box(-30, 30, -10, 10, -5, 5)
-frame += bar((-28, -8), (-18, -36)) + bar((28, -8), (18, -36)) + bar((-22, -34), (22, -34))
-# 7450 / 7451: shovel panel 2x3x2 - bed side wall with a curved floor lip and an axle hole knuckle
+frame += prism_x([(-10, -5), (-10, 5), (-36, 14), (-40, 14), (-40, 4)], -30, 30)   # sloped hood
+frame += box(-30, 30, -42, -36, 4, 30)                                            # roof
+for sx in (-30, 25):                                                              # side frames
+    frame += box(sx, sx + 5, -40, 10, 25, 30)
+    frame += box(sx, sx + 5, 3, 10, -5, 30)
+frame += cross_mark(-20, 0, -5.2) + cross_mark(20, 0, -5.2)
+
+# 7450 / 7451: one panel of a tipper-bed side: floor, outer wall leaning out, end wall
+# leaning out, rim, and a hinge knuckle with an axle hole at the bottom corner.
 def shovel(side):
-    s = 1 if side == "R" else -1
-    out = box(-20, 20, -4, 4, -30, 30)                                      # floor
-    out += prism([(s * 16, 4), (s * 22, 4), (s * 26, -40), (s * 20, -40)][:: (1 if s > 0 else -1)], -30, 30)
-    out += box(-20, 20, -40, 0, 26, 30)                                     # end wall
-    out += box(min(s * 4, s * 24), max(s * 4, s * 24), 4, 16, -30, -18)     # knuckle with axle hole
+    e = -1 if side == "R" else 1                                                   # closed end
+    out = box(0, 40, -4, 4, -22, 22)                                               # floor
+    out += prism([(40, 4), (45, 4), (51, -38), (46, -38)], -22, 22)               # outer wall
+    end = [(4, e * 22), (4, e * 26), (-38, e * 31), (-38, e * 27)]
+    out += prism_x(end, 0, 50)                                                     # end wall
+    out += box(0, 51, -42, -38, e * 31 - 3, e * 31 + 1) if e > 0 else box(0, 51, -42, -38, e * 31 - 1, e * 31 + 3)
+    out += box(30, 46, 4, 18, e * 22 - 12, e * 22 + 2) if e > 0 else box(30, 46, 4, 18, e * 22 - 2, e * 22 + 12)
     return out
 
 files = []
@@ -113,13 +145,10 @@ def model(name, steps):
 
 # ------------------------------------------------------------- layout
 AXLE_Y = -19            # wheel centre height (tyre radius 19)
-# rear bogie: split blocks with their lower axle-hole row at wheel height
-R_BLOCK_Y = AXLE_Y - 20 # round pin hole 20 above the lower axle row
-RB1_Z, RB2_Z = 40, 0    # rear split blocks (their axle holes sit 20 behind -> wheels at 60 and 20)
+R_BLOCK_Y = AXLE_Y - 20 # split blocks: round pin hole on top, lower axle row at wheel height
+RB1_Z, RB2_Z = 40, 0    # rear split blocks (axle holes 20 behind -> wheels at 60 and 20)
 REAR_WHEELS = [RB1_Z + 20, RB2_Z + 20]
-
-# front unit (local to the front unit: origin at the articulation hole)
-FRONT_AXLE_Z = -70
+FRONT_AXLE_Z = -50
 
 def axle_pins(z, y=AXLE_Y, sides=("R", "L")):
     out = []
@@ -128,8 +157,8 @@ def axle_pins(z, y=AXLE_Y, sides=("R", "L")):
     return out
 
 rear = [
-    [ref(DBG, (0, R_BLOCK_Y + 30, 20), CROSS_BLOCK, "32184.dat"),
-     ref(LBG, (0, R_BLOCK_Y + 10, 20), SHAFT_UP, "3673.dat")],                                   # 1
+    [ref(DBG, (0, R_BLOCK_Y + 28, 20), CROSS_BLOCK, "32184.dat"),
+     ref(LBG, (0, R_BLOCK_Y + 8, 20), SHAFT_UP, "3673.dat")],                                    # 1
     [ref(BLK, (0, R_BLOCK_Y, RB1_Z), SPLIT_REAR, "92907.dat")],                                  # 2
     axle_pins(REAR_WHEELS[0], sides="R"),                                                        # 3
     [ref(BLK, (0, R_BLOCK_Y, RB2_Z), SPLIT_REAR, "92907.dat")] + axle_pins(REAR_WHEELS[1], sides="R"),  # 4
@@ -137,38 +166,41 @@ rear = [
     [ref(LBG, (0, R_BLOCK_Y - 20, RB2_Z), SHAFT_UP, "3673.dat")],                                # 6
 ]
 
-FB_Y = R_BLOCK_Y - 20       # front unit sits one hole above the rear bogie
+FB_Y = R_BLOCK_Y - 20       # front unit's articulation block sits on the rear pin
 front_unit = model("Front Unit.ldr", [
-    [ref(DBG, (0, AXLE_Y + 4, -60), CROSS_BLOCK, "32184.dat"),
-     ref(LBG, (0, AXLE_Y - 16, -60), SHAFT_UP, "3673.dat")],                                     # 7
-    [ref(BLK, (0, AXLE_Y - 20, -50), SPLIT_FRONT, "92907.dat")],                                 # 8
+    [ref(DBG, (0, AXLE_Y + 8, -40), CROSS_BLOCK, "32184.dat"),
+     ref(LBG, (0, AXLE_Y - 12, -40), SHAFT_UP, "3673.dat")],                                     # 7
+    [ref(BLK, (0, AXLE_Y - 20, -30), SPLIT_FRONT, "92907.dat")],                                 # 8
     axle_pins(FRONT_AXLE_Z, sides="R"),                                                          # 9
-    [ref(BLK, (0, AXLE_Y - 30, -40), SHAFT_Z, "32062.dat")] + axle_pins(FRONT_AXLE_Z, sides="L"), # 10
-    [ref(YEL, (-10, AXLE_Y - 50, -55), TRIPLE, "63869.dat")],                                    # 11
+    [ref(BLK, (0, AXLE_Y - 30, -15), SHAFT_Z, "32062.dat")] + axle_pins(FRONT_AXLE_Z, sides="L"), # 10
+    [ref(YEL, (0, AXLE_Y - 16, -45), TRIPLE, "63869.dat")],                                      # 11
     [ref(BLK, (0, FB_Y, RB2_Z), SPLIT_FRONT, "92907.dat"),
-     ref(BLK, (0, FB_Y + 10, RB2_Z - 30), SHAFT_Z, "32062.dat")],                                # 12
+     ref(BLK, (0, FB_Y + 10, RB2_Z - 25), SHAFT_Z, "32062.dat")],                                # 12
 ])
 
 cab = model("Cab.ldr", [
     [ref(YEL, (0, 0, 0), FRAME, "7944.dat"), ref(TAN, (0, 0, 10), rot(Z, Y), "32002.dat")],      # 14
     [ref(BLK, (-20, 0, 15), SHAFT_Z, "32062.dat"), ref(BLK, (20, 0, 15), SHAFT_Z, "32062.dat")], # 15
 ])
-CAB_POS = (0, AXLE_Y - 75, -66)
+CAB_POS = (0, -46, -68)
+BEHIND = rot(-X, Y)          # turned 180 degrees: the second frame faces backwards
 
+# one side of the tipper bed: front panel + rear panel joined by an axle, hinge axle in front
 bed_half = model("Tipper Bed Half.ldr", [
-    [ref(YEL, (20, 0, 0), I, "7450.dat"), ref(BLK, (20, 10, -24), SHAFT_X, "32062.dat")],        # 19
-    [ref(YEL, (0, 10, -24), SHAFT_X, "4519.dat")],                                                # 20
-    [ref(YEL, (-20, 0, 0), I, "7451.dat")],                                                       # 21
+    [ref(YEL, (0, 0, -22), I, "7451.dat"), ref(BLK, (37, 11, 0), SHAFT_Z, "32062.dat")],         # 19
+    [ref(YEL, (22, 11, -34), SHAFT_X, "4519.dat")],                                               # 20
+    [ref(YEL, (0, 0, 22), I, "7450.dat")],                                                        # 21
 ])
+BED_Y, BED_Z = -66, 40
 
 main = model("42233-3 Dump Truck.ldr", rear + [
     [ref(16, (0, 0, 0), I, "Front Unit.ldr")],                                                   # 13
     [ref(16, CAB_POS, I, "Cab.ldr")],                                                            # 16 (after cab sub-build)
-    [ref(YEL, (CAB_POS[0], CAB_POS[1], CAB_POS[2] + 22), FRAME, "7944.dat")],                    # 17
-    [ref(YEL, (10, FB_Y - 10, -5), LBEAM, "32140.dat"),
-     ref(BLK, (0, AXLE_Y - 20, 55), SHAFT_X, "32062.dat")],                                      # 18
-    [ref(16, (0, FB_Y - 40, 20), I, "Tipper Bed Half.ldr"),
-     ref(16, (0, FB_Y - 40, 80), rot(-X, Y), "Tipper Bed Half.ldr")],                            # 22
+    [ref(YEL, (CAB_POS[0], CAB_POS[1], CAB_POS[2] + 60), BEHIND, "7944.dat")],                   # 17
+    [ref(YEL, (0, -52, 5), LBEAM, "32140.dat"),
+     ref(BLK, (0, AXLE_Y - 22, 40), SHAFT_X, "32062.dat")],                                      # 18
+    [ref(16, (0, BED_Y, BED_Z), I, "Tipper Bed Half.ldr"),
+     ref(16, (0, BED_Y, BED_Z), BEHIND, "Tipper Bed Half.ldr")],                                 # 22
     [ref(LBG, (40, AXLE_Y, z), WHEEL_R, "42610.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
     [ref(LBG, (-40, AXLE_Y, z), WHEEL_L, "42610.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
     [ref(BLK, (40, AXLE_Y, z), WHEEL_R, "50951.dat") for z in [FRONT_AXLE_Z] + REAR_WHEELS] +
