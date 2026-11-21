@@ -39,8 +39,10 @@ final class BuildScene {
     /// Centre and radius of what is on screen, in `root` space. The 3D viewer aims its camera at it.
     private(set) var framingCentre: SIMD3<Float> = .zero
     private(set) var framingRadius: Float = 0.1
-    /// Centre, radius, and whether the camera should glide there (false = cut).
-    var onFramingChange: ((SIMD3<Float>, Float, Bool) -> Void)?
+    /// Centre, radius, the angle to look from (nil = leave it), and whether the camera
+    /// should glide there (false = cut).
+    var onFramingChange: ((SIMD3<Float>, Float, Float?, Bool) -> Void)?
+    private var shownView = -1
 
     init(model: BuildModel) {
         self.model = model
@@ -229,7 +231,8 @@ final class BuildScene {
         content.position = contentOffset(for: a)
         framingCentre = SIMD3(0, (hi.y - lo.y) / 2, 0)
         framingRadius = max(simd_length(hi - lo) / 2, 0.01)
-        onFramingChange?(framingCentre, framingRadius, true)
+        shownView = 0
+        onFramingChange?(framingCentre, framingRadius, BuildModel.viewYaws[0], true)
     }
 
     /// Like a CAD assembly, the grounded part stays put: the view only changes when the
@@ -240,7 +243,11 @@ final class BuildScene {
         let changed = simd_distance(view.centre, framingCentre) > 1e-5 || abs(view.radius - framingRadius) > 1e-5
         framingCentre = view.centre
         framingRadius = view.radius
-        if changed { onFramingChange?(view.centre, view.radius, glide) }
+        // Every step change goes back to the step's own side, which undoes a manual turn;
+        // the camera itself does nothing if it is already there.
+        shownView = info.view
+        _ = changed
+        onFramingChange?(view.centre, view.radius, BuildModel.viewYaws[info.view], glide)
     }
 
     /// One view per run of steps: each run ends when the build is nearly twice the size it

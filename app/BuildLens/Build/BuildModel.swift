@@ -55,6 +55,8 @@ struct BuildPackage: Decodable {
         let added: [Int]
         /// How the new pieces are pushed home (missing in packages made before this existed).
         let moves: [Move]?
+        /// Which of the four sides the step is looked at from (see `BuildModel.viewYaws`).
+        let view: Int?
     }
 
     /// Pieces that go on together, and the direction they are pushed, in the shown
@@ -111,6 +113,8 @@ final class BuildModel {
         let assembly: BuildPackage.Assembly
         let added: [Int]
         let moves: [BuildPackage.Move]
+        /// The side this step is looked at from: 0 front-right, 1 front-left, 2 back-right, 3 back-left.
+        let view: Int
         /// Sub-builds that go onto the model in this step. When there are any, the step is
         /// "attach what you just built", not "add these loose pieces".
         let attaches: [BuildPackage.Assembly]
@@ -167,6 +171,7 @@ final class BuildModel {
                 assembly: package.assemblies[step.assembly],
                 added: step.added,
                 moves: step.moves ?? [],
+                view: min(max(step.view ?? 0, 0), 3),
                 attaches: attaches,
                 visible: visible,
                 parts: partLines(for: step.added.filter(loose.contains))
@@ -251,10 +256,26 @@ final class BuildModel {
         Self.resource("thumb-\(part)-\(colour)", "png", in: bundle)
     }
 
-    /// The glasses frames of a step: the piece waiting with its arrow (""), the arrow at the
-    /// bottom of its bounce ("-w"), part-way in ("-a") and seated ("-b").
-    func glassesFrameURL(step: Int, variant: String = "") -> URL? {
-        Self.resource(String(format: "hud-step-%03d", step + 1) + variant, "png", in: bundle)
+    /// The camera's angle round the model for each of the four views (0 = straight in
+    /// front, positive = towards the right). The same numbers are in pipeline/render.
+    static let viewYaws: [Float] = [0.65, -0.65, .pi - 0.65, -(.pi - 0.65)]
+
+    /// The view whose angle is nearest to `yaw`.
+    static func view(nearest yaw: Float) -> Int {
+        func gap(_ a: Float, _ b: Float) -> Float { abs(atan2(sin(a - b), cos(a - b))) }
+        return viewYaws.indices.min { gap(viewYaws[$0], yaw) < gap(viewYaws[$1], yaw) } ?? 0
+    }
+
+    /// The glasses frames of a step from one of the four sides: the piece waiting with its
+    /// arrow (""), the arrow at the bottom of its bounce ("-w"), part-way in ("-a"), seated ("-b").
+    func glassesFrameURL(step: Int, view: Int, variant: String = "") -> URL? {
+        Self.resource(String(format: "hud-step-%03d-q%d", step + 1, view) + variant, "png", in: bundle)
+    }
+
+    /// The finished step turning towards the next step's side, frames 1...4. Only exists
+    /// where the next step is looked at from another side.
+    func glassesTurnURL(step: Int, frame: Int) -> URL? {
+        Self.resource(String(format: "hud-step-%03d-r%d", step + 1, frame), "png", in: bundle)
     }
 
     var heroImageURL: URL? { Self.resource("build-hero", "png", in: bundle) }

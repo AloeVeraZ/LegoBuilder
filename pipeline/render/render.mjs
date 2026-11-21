@@ -51,17 +51,32 @@ if (want('--previews')) {
   console.log(`previews: ${stepList.length}`);
 }
 if (want('--hud')) {
-  // Four frames per step for the glasses: the piece waiting with its arrow (the step's
-  // picture), the same with the arrow at the bottom of its bounce (-w), then part-way in
-  // (-a) and seated (-b), which play when the wearer moves on.
+  // The glasses only show pictures, so every picture they could need is drawn here.
+  // Per step, from each of the four sides (q0..q3): the piece waiting with its arrow, the
+  // arrow at the bottom of its bounce (-w), part-way in (-a) and seated (-b).
+  // Where the next step is looked at from another side, four frames (-r1..-r4) of the
+  // finished step turning round to it.
   const variants = [['', { lift: 1 }], ['-w', { lift: 1, pressed: true }], ['-a', { lift: 0.45 }], ['-b', { lift: 0 }]];
+  const views = await page.evaluate(() => BL.stepViews());
+  const shot = async (name, s, opts) => save(path.join(buildDir, 'hud'), name,
+    await page.evaluate(([s, opts]) => BL.step(s, { w: 640, h: 480, mode: 'hud', ...opts }), [s, opts]));
+  let count = 0;
   for (const s of stepList) {
-    for (const [suffix, opts] of variants) {
-      save(path.join(buildDir, 'hud'), `step-${String(s + 1).padStart(3, '0')}${suffix}.png`,
-        await page.evaluate(([s, opts]) => BL.step(s, { w: 640, h: 480, mode: 'hud', ...opts }), [s, opts]));
+    const id = String(s + 1).padStart(3, '0');
+    for (let q = 0; q < 4; q++) {
+      for (const [suffix, opts] of variants) { await shot(`step-${id}-q${q}${suffix}.png`, s, { ...opts, view: q }); count++; }
+    }
+    // The next step of the same assembly, if it is seen from a different side.
+    const next = views.findIndex((v, k) => k > s && v.assembly === views[s].assembly);
+    if (next === s + 1 && views[next].view !== views[s].view) {
+      const [from, to] = await page.evaluate(([a, b]) => [BL.viewYaw(a), BL.viewYaw(b)], [views[s].view, views[next].view]);
+      let turn = to - from;
+      if (turn > Math.PI) turn -= 2 * Math.PI;          // the short way round
+      if (turn < -Math.PI) turn += 2 * Math.PI;
+      for (let j = 1; j <= 4; j++) { await shot(`step-${id}-r${j}.png`, s, { lift: 0, yaw: from + turn * j / 5 }); count++; }
     }
   }
-  console.log(`hud frames: ${stepList.length} steps x ${variants.length}`);
+  console.log(`hud frames: ${count}`);
 }
 if (want('--hero')) {
   save(buildDir, 'hero.png', await page.evaluate(() => BL.finished()));

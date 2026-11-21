@@ -70,8 +70,8 @@ final class OrbitController: NSObject {
         view.scene.addAnchor(anchor)
         anchor.addChild(scene.root)
         scene.root.transform = Transform()
-        scene.onFramingChange = { [weak self] centre, radius, glide in
-            self?.frame(centre: centre, radius: radius, animated: glide)
+        scene.onFramingChange = { [weak self] centre, radius, yaw, glide in
+            self?.frame(centre: centre, radius: radius, yaw: yaw, animated: glide)
         }
         frame(centre: scene.framingCentre, radius: scene.framingRadius)
         installInput(on: view)
@@ -96,8 +96,21 @@ final class OrbitController: NSObject {
         frame(centre: target, radius: radius)
     }
 
-    /// Aims the camera at a sphere. Step changes glide there instead of jumping.
-    private func frame(centre: SIMD3<Float>, radius r: Float, animated: Bool = false) {
+    /// Called when the user has turned the model by hand, with the nearest of the four views.
+    var onUserView: ((Int) -> Void)?
+
+    private var reduceMotion: Bool {
+        #if os(iOS)
+        UIAccessibility.isReduceMotionEnabled
+        #else
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #endif
+    }
+
+    /// Aims the camera at a sphere, optionally from a given side. Step changes glide there
+    /// instead of jumping. A turn to another side is slow and eased, never a whip-round,
+    /// and with Reduce Motion on the camera simply cuts.
+    private func frame(centre: SIMD3<Float>, radius r: Float, yaw newYaw: Float? = nil, animated: Bool = false) {
         radius = r
         let vfov = camera.camera.fieldOfViewInDegrees * .pi / 180
         var aspect: Float = 0.6
@@ -107,24 +120,33 @@ final class OrbitController: NSObject {
         let hfov = 2 * atan(tan(vfov / 2) * aspect)
         // Fit into the part of the view that is left above the controls.
         let fitted = r * 1.2 / sin(min(vfov * (1 - verticalBias), hfov) / 2)
+        // The short way round to the new side.
+        var turn: Float = 0
+        if let newYaw { turn = atan2(sin(newYaw - yaw), cos(newYaw - yaw)) }
         cameraGlide?.cancel()
-        guard animated else {
+        let moved = simd_distance(centre, target) > 1e-5 || abs(fitted - distance) > 1e-5 || abs(turn) > 1e-3
+        guard animated, moved, !reduceMotion else {
             target = centre
             distance = fitted
+            yaw += turn
             update()
             return
         }
-        let (fromTarget, fromDistance) = (target, distance)
+        let (fromTarget, fromDistance, fromYaw) = (target, distance, yaw)
+        // About a quarter turn a second at most.
+        let duration = max(0.6, Double(abs(turn)) / (.pi / 2) * 1.0)
+        let start = Date()
         cameraGlide = Task { @MainActor [weak self] in
-            let frames = 36
-            for f in 1 ... frames {
+            while true {
                 guard let self, !Task.isCancelled else { return }
-                let t = Float(f) / Float(frames)
+                let t = Float(min(Date().timeIntervalSince(start) / duration, 1))
                 let eased = t * t * (3 - 2 * t)
                 self.target = fromTarget + (centre - fromTarget) * eased
                 self.distance = fromDistance + (fitted - fromDistance) * eased
+                self.yaw = fromYaw + turn * eased
                 self.update()
-                try? await Task.sleep(nanoseconds: 16_000_000)
+                if t >= 1 { return }
+                try? await Task.sleep(nanoseconds: 8_000_000)
             }
         }
     }
@@ -184,7 +206,8 @@ final class OrbitController: NSObject {
     }
 
     @objc private func pan(_ g: UIPanGestureRecognizer) {
-        if g.state == .began { startYaw = yaw; startPitch = pitch }
+        if g.state == .began { startYaw = yaw; startPitch = pitch; cameraGlide?.cancel() }
+        if g.state == .ended { onUserView?(BuildModel.view(nearest: yaw)) }
         let t = g.translation(in: g.view)
         yaw = startYaw - Float(t.x) * 0.008
         pitch = min(max(startPitch + Float(t.y) * 0.008, -0.15), 1.45)
@@ -206,7 +229,8 @@ final class OrbitController: NSObject {
     }
 
     @objc private func pan(_ g: NSPanGestureRecognizer) {
-        if g.state == .began { startYaw = yaw; startPitch = pitch }
+        if g.state == .began { startYaw = yaw; startPitch = pitch; cameraGlide?.cancel() }
+        if g.state == .ended { onUserView?(BuildModel.view(nearest: yaw)) }
         let t = g.translation(in: g.view)
         yaw = startYaw - Float(t.x) * 0.008
         pitch = min(max(startPitch - Float(t.y) * 0.008, -0.15), 1.45)

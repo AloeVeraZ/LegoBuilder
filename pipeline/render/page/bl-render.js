@@ -111,6 +111,12 @@ function addInstance(id, mode, local, edges, edgeColour) {
   });
 }
 
+// The four sides a step can be looked at from (see step_view in ldraw2build.py), as the
+// camera's angle round the model: 0 is straight in front, positive is towards the right.
+const VIEW_YAWS = [0.65, -0.65, Math.PI - 0.65, -(Math.PI - 0.65)];
+BL.viewYaw = q => VIEW_YAWS[q] ?? VIEW_YAWS[0];
+const viewDir = yaw => [Math.sin(yaw) * 1.76, 0.85, Math.cos(yaw) * 1.76];
+
 function frame(bounds, w, h, dir = [1.0, 0.85, 1.45], margin = 1.12) {
   const lo = new THREE.Vector3(...bounds[0]), hi = new THREE.Vector3(...bounds[1]);
   const c = lo.clone().add(hi).multiplyScalar(0.5);
@@ -201,7 +207,9 @@ function stageBounds(stepIndex) {
 // One build step. mode: 'preview' (colour, new parts glow) or 'hud' (green-on-black for the glasses).
 // lift: 1 = the new pieces wait off their place with an arrow (how a step is shown),
 // 0 = seated, anything between = part-way in. pressed: the arrow at the low point of its bounce.
-BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview', lift = 0, pressed = false } = {}) {
+// view: which of the four sides (default: the step's own). yaw: an exact camera angle
+// instead, for the frames in between two sides.
+BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview', lift = 0, pressed = false, view, yaw } = {}) {
   const hud = mode === 'hud';
   makeScene(hud);
   const { asm, added, visible } = cumulative(stepIndex);
@@ -218,8 +226,8 @@ BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview', lift = 0, p
   }
   // The camera stays put for a run of steps and only pulls back when the build has
   // outgrown the view (same rule as the app); the frame leaves room for waiting pieces.
-  const view = stageBounds(stepIndex);
-  const lo = view[0].map(v => v - gap), hi = view[1].map(v => v + gap);
+  const stage = stageBounds(stepIndex);
+  const lo = stage[0].map(v => v - gap), hi = stage[1].map(v => v + gap);
   if (lift >= 1) {
     const size = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 * 0.13;
     const tips = [];
@@ -231,9 +239,13 @@ BL.step = function (stepIndex, { w = 900, h = 700, mode = 'preview', lift = 0, p
       addArrow(box, m.push, size, pressed, hud ? 0xd9ffe2 : 0xdb1f26);
     }
   }
-  frame([lo, hi], w, h, undefined, hud ? 0.98 : 1.12);
+  frame([lo, hi], w, h, viewDir(yaw ?? BL.viewYaw(view ?? pkg.steps[stepIndex].view ?? 0)), hud ? 0.98 : 1.12);
   return snap(w, h, hud ? 0x000000 : 0xf3f4f6);
 };
+
+// For each step: the side it is shown from, and its assembly (turning frames are only
+// needed between steps of the same assembly).
+BL.stepViews = () => pkg.steps.map(st => ({ view: st.view ?? 0, assembly: st.assembly }));
 
 // Thumbnail of one part in one colour, transparent background, instruction-style outline.
 BL.part = function (partIndex, colour, { size = 192 } = {}) {

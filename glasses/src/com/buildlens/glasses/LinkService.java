@@ -55,6 +55,10 @@ public class LinkService extends Service {
 
     static volatile int step = 0;
     static volatile boolean finished = false;
+    /** The side to show the step from when the phone was turned by hand; -1 = the step's own. */
+    static volatile int view = -1;
+    /** The phone is showing its "good job" card for this step; the next step follows. */
+    static volatile boolean milestone = false;
     private static volatile LinkService instance;
     private static volatile Listener listener;
 
@@ -190,10 +194,14 @@ public class LinkService extends Service {
                 final boolean replay = msg.optBoolean("replay", false);
                 // "open": the instructions are on screen on the phone, so ours should be too.
                 final boolean open = msg.optBoolean("open", false);
+                final int side = msg.optInt("view", -1);
+                final boolean celebrate = msg.optBoolean("milestone", false);
                 main.post(() -> {
-                    boolean changed = n != step || done != finished;
+                    boolean changed = n != step || done != finished || side != view || celebrate != milestone;
                     step = n;
                     finished = done;
+                    view = side;
+                    milestone = celebrate;
                     if (changed || replay || (open && listener == null)) deliver(replay);
                 });
             }

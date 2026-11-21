@@ -35,10 +35,10 @@ say "iPhone: ${NAME//_/ } ($STATE)"
 # --- the signing team (your Apple ID in Xcode)
 TEAM="${DEVELOPMENT_TEAM:-}"
 if [ -z "$TEAM" ]; then
-  TEAM="$(defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier 2>/dev/null | sed -n 's/.*teamID *= *"\{0,1\}\([A-Z0-9]\{10\}\)"\{0,1\};.*/\1/p' | head -1)"
+  TEAM="$(defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier 2>/dev/null | sed -n 's/.*teamID *= *"\{0,1\}\([A-Z0-9]\{10\}\)"\{0,1\};.*/\1/p' | head -1 || true)"
 fi
 if [ -z "$TEAM" ]; then
-  TEAM="$(security find-certificate -a -c "Apple Development" -p 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*OU *= *\([A-Z0-9]\{10\}\).*/\1/p' | head -1)"
+  TEAM="$(security find-certificate -a -c "Apple Development" -p 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*OU *= *\([A-Z0-9]\{10\}\).*/\1/p' | head -1 || true)"
 fi
 [ -n "$TEAM" ] || fail "No Apple ID in Xcode yet. In Xcode: Settings (Cmd+,) > Accounts > + > Apple Account, sign in, then run this again."
 say "Signing team: $TEAM"

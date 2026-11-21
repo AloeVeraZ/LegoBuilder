@@ -32,14 +32,25 @@ for i, s in enumerate(pkg["steps"]):
     lines = sorted(counts.items(), key=lambda kv: -kv[1])
     asm = pkg["assemblies"][s["assembly"]]
     sub = "" if asm["id"] == 0 else f"SUB: {asm['name'].upper()}" + (f" x{asm['uses']}" if asm["uses"] > 1 else "")
-    name = f"hud-step-{i + 1:03d}.png"
-    # The step's picture (piece waiting, arrow up), the arrow at the bottom of its bounce,
-    # then part-way in and seated for when the wearer moves on.
-    for suffix in ("", "-w", "-a", "-b"):
-        variant = name.replace(".png", suffix + ".png")
-        shutil.copy(os.path.join(data, "hud", variant), os.path.join(out, "hud", variant))
+    name = f"hud-step-{i + 1:03d}"
+    # Every picture of the step: four sides (q0..q3), each waiting / arrow down (-w) /
+    # part-way in (-a) / seated (-b), plus the turning frames (-r1..) where there are any.
+    turns = 0
+    for f in sorted(os.listdir(os.path.join(data, "hud"))):
+        if f.startswith(name + "-"):
+            shutil.copy(os.path.join(data, "hud", f), os.path.join(out, "hud", f))
+            turns += "-r" in f
+    # The "good job" moment when this step ends a part of the build (same words as the phone).
+    done = None
+    if i + 1 < len(pkg["steps"]) and pkg["steps"][i + 1]["assembly"] != s["assembly"]:
+        coming = pkg["assemblies"][pkg["steps"][i + 1]["assembly"]]
+        if asm["id"] != 0:
+            done = [f"{asm['name'].upper()} DONE!",
+                    f"MAKE {asm['uses']} OF THESE" if asm["uses"] > 1 else "NOW IT GOES ON THE TRUCK"]
+        else:
+            done = ["GOOD JOB!", f"NEXT: THE {coming['name'].upper()}"]
     attach_lines = [("ATTACH " + (f"{a['uses']}x " if a["uses"] > 1 else "THE ") + a["name"].upper()) for a in attached]
-    steps.append({"frame": f"hud/{name}", "sub": sub,
+    steps.append({"frame": f"hud/{name}", "view": s.get("view", 0), "turns": turns, "done": done, "sub": sub,
                   "parts": attach_lines + [f"+{n} {colours.get(c, '').upper()} {clean(pkg['parts'][p]['name']).upper()}" for (p, c), n in lines]})
 json.dump({"name": pkg["set"]["name"], "steps": steps}, open(os.path.join(out, "steps.json"), "w"))
 print(f"{len(steps)} steps -> {out}")

@@ -65,6 +65,9 @@ public class MainActivity extends Activity implements LinkService.Listener {
 
     private int shownStep = -1;             // what the display shows now (-1 = nothing yet)
     private boolean shownFinished = false;
+    private int shownView = 0;              // the side the shown step is seen from
+    private boolean shownMilestone = false; // the "good job" text is up
+    private static final int TURN_MS = 90, GOOD_JOB_MS = 2000;
     private int animation = 0;              // bumped on every change so stale timers do nothing
     private Bitmap waitFrame, pressedFrame; // the two pictures of the current step's bounce
     private int framesFor = -1;             // which step those two pictures belong to
@@ -153,12 +156,20 @@ public class MainActivity extends Activity implements LinkService.Listener {
         }
     }
 
-    private String frameOf(int index) throws Exception {
-        return steps.getJSONObject(index).getString("frame");
+    /** A picture of a step: from side `view`, in state "" (waiting), "-w", "-a" or "-b". */
+    private String frameOf(int index, int view, String state) throws Exception {
+        return steps.getJSONObject(index).getString("frame") + "-q" + view + state + ".png";
     }
 
-    private static String variant(String asset, String suffix) {
-        return asset.replace(".png", suffix + ".png");
+    /** Frame n (1-based) of step `index` turning towards the next step's side. */
+    private String turnOf(int index, int n) throws Exception {
+        return steps.getJSONObject(index).getString("frame") + "-r" + n + ".png";
+    }
+
+    /** The side a step is seen from: where the phone was turned to, else the step's own. */
+    private int viewOf(int index) {
+        if (LinkService.view >= 0 && LinkService.view <= 3) return LinkService.view;
+        return steps.optJSONObject(index) == null ? 0 : steps.optJSONObject(index).optInt("view", 0);
     }
 
     private Bitmap load(String asset) {
@@ -220,17 +231,37 @@ public class MainActivity extends Activity implements LinkService.Listener {
         if (count == 0) { header.setText("NO STEPS"); return; }
         int step = Math.max(0, Math.min(LinkService.step, count - 1));
         boolean finished = LinkService.finished;
+        boolean milestone = LinkService.milestone && !finished;
+        int view = viewOf(step);
         LinkService.step = step;
         onLinkChanged();
-        if (step == shownStep && finished == shownFinished) { wake(); return; }
+        if (step == shownStep && finished == shownFinished && view == shownView && milestone == shownMilestone) { wake(); return; }
         stayAwake();
         try {
             if (finished) {
-                header.setText("DONE ✓");
+                header.setText("DONE \u2713");
                 sub.setText(setName.toUpperCase());
                 parts.setText("");
-                playFinished(step);
+                playSeated(step, step == shownStep ? shownView : view);
+            } else if (milestone) {
+                showGoodJob(step);
+                playSeated(step, step == shownStep ? shownView : view);
             } else {
+                // Leaving the last step of a part of the build by a click on the glasses:
+                // the "good job" comes first, then the new step.
+                boolean forward = shownStep >= 0 && step == shownStep + 1 && !shownFinished;
+                if (forward && !shownMilestone && steps.getJSONObject(shownStep).optJSONArray("done") != null) {
+                    final int run = ++animation;
+                    final int from = shownStep, fromView = shownView;
+                    showGoodJob(from);
+                    settling = true;
+                    bouncing = false;
+                    frame.setImageBitmap(load(frameOf(from, fromView, "-a")));
+                    main.postDelayed(() -> { if (run == animation) setFrame(from, fromView, "-b"); }, HALF_MS);
+                    main.postDelayed(() -> { if (run == animation) { shownMilestone = false; shownStep = -1; show(); } }, GOOD_JOB_MS);
+                    shownMilestone = true;
+                    return;
+                }
                 JSONObject s = steps.getJSONObject(step);
                 header.setText("STEP " + (step + 1) + "/" + count);
                 String section = s.optString("sub");
@@ -240,56 +271,81 @@ public class MainActivity extends Activity implements LinkService.Listener {
                 for (int i = 0; i < lines.length() && i < 4; i++) b.append(lines.getString(i)).append('\n');
                 if (lines.length() > 4) b.append("+").append(lines.length() - 4).append(" MORE\n");
                 parts.setText(b.toString().trim());
-                playStep(step, shownStep >= 0 && step == shownStep + 1 && !shownFinished);
+                // A step forward slots the last piece in first, unless the "good job" already did.
+                playStep(step, view, forward && !shownMilestone);
             }
         } catch (Exception e) {
             Log.e(TAG, "show", e);
         }
         shownStep = step;
         shownFinished = finished;
+        shownView = view;
+        shownMilestone = milestone;
+    }
+
+    /** The same words as the phone's card, in the glasses' own type. */
+    private void showGoodJob(int step) throws Exception {
+        JSONArray done = steps.getJSONObject(step).optJSONArray("done");
+        header.setText(done == null ? "GOOD JOB!" : done.getString(0));
+        sub.setText(done == null ? "" : done.getString(1));
+        parts.setText("");
+    }
+
+    private void setFrame(int step, int view, String state) {
+        try { frame.setImageBitmap(load(frameOf(step, view, state))); } catch (Exception e) { Log.e(TAG, "frame", e); }
     }
 
     // ------------------------------------------------------------ pictures
     /**
      * The new piece waits off its place while the arrow bounces. Coming from the step
-     * before, that step's piece first slots in (part-way, then seated).
+     * before, that step's piece first slots in (part-way, then seated), and where the new
+     * step is seen from another side the finished step turns round to it.
      */
-    private void playStep(final int step, boolean slotInPrevious) throws Exception {
+    private void playStep(final int step, final int view, boolean slotInPrevious) throws Exception {
         final int run = ++animation;
-        final String asset = frameOf(step);
         int delay = 0;
         bouncing = false;
         settling = true;
         if (slotInPrevious) {
-            final String before = frameOf(step - 1);
-            frame.setImageBitmap(load(variant(before, "-a")));
-            main.postDelayed(() -> { if (run == animation) frame.setImageBitmap(load(variant(before, "-b"))); }, HALF_MS);
+            final int before = step - 1, beforeView = shownView;
+            frame.setImageBitmap(load(frameOf(before, beforeView, "-a")));
+            main.postDelayed(() -> { if (run == animation) setFrame(before, beforeView, "-b"); }, HALF_MS);
             delay = HALF_MS + SEATED_MS;
+            // Turning frames exist for the step's own side going to the next step's own side.
+            JSONObject b = steps.getJSONObject(before);
+            int turns = b.optInt("turns", 0);
+            if (turns > 0 && beforeView == b.optInt("view", 0) && view == steps.getJSONObject(step).optInt("view", 0)) {
+                for (int n = 1; n <= turns; n++) {
+                    final String turn = turnOf(before, n);
+                    main.postDelayed(() -> { if (run == animation) frame.setImageBitmap(load(turn)); }, delay);
+                    delay += TURN_MS;
+                }
+            }
         }
+        final String asset = frameOf(step, view, ""), pressedAsset = frameOf(step, view, "-w");
         main.postDelayed(() -> {
             if (run != animation) return;
             waitFrame = load(asset);
-            pressedFrame = load(variant(asset, "-w"));
-            framesFor = step;
+            pressedFrame = load(pressedAsset);
+            framesFor = step * 4 + view;
             startBounce(run);
         }, delay);
     }
 
-    /** The last piece slots in, and the finished model stays on the display. */
-    private void playFinished(int step) throws Exception {
+    /** The piece slots in and the seated picture stays up (finished, or during "good job"). */
+    private void playSeated(final int step, final int view) throws Exception {
         final int run = ++animation;
-        final String last = frameOf(step);
         bouncing = false;
         settling = false;
-        frame.setImageBitmap(load(variant(last, "-a")));
-        main.postDelayed(() -> { if (run == animation) frame.setImageBitmap(load(variant(last, "-b"))); }, HALF_MS * 2);
+        frame.setImageBitmap(load(frameOf(step, view, "-a")));
+        main.postDelayed(() -> { if (run == animation) setFrame(step, view, "-b"); }, HALF_MS * 2);
     }
 
     /** Two clicks: the step again from the start, with a short blank so it reads as a restart. */
     private void replayStep() {
         stayAwake();
         // Anything out of line with what should be showing: draw the step afresh instead.
-        if (LinkService.finished != shownFinished || LinkService.step != shownStep || framesFor != shownStep) {
+        if (LinkService.finished != shownFinished || LinkService.step != shownStep || framesFor != shownStep * 4 + shownView) {
             shownStep = -1;
             shownFinished = false;
             show();
@@ -333,7 +389,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
     /** Any input brings a stopped bounce back. */
     private void wake() {
         stayAwake();
-        if (LinkService.finished || settling || framesFor != shownStep) return;
+        if (LinkService.finished || settling || shownMilestone || framesFor != shownStep * 4 + shownView) return;
         if (bouncing) bounceUntil = SystemClock.uptimeMillis() + BOUNCE_FOR_MS;
         else startBounce(++animation);
     }
@@ -341,12 +397,16 @@ public class MainActivity extends Activity implements LinkService.Listener {
     // ------------------------------------------------------------ actions
     private void next() {
         if (LinkService.finished) return;
+        LinkService.view = -1;
+        LinkService.milestone = false;
         if (LinkService.step + 1 < steps.length()) LinkService.step++; else LinkService.finished = true;
         show();
         LinkService.send(false);
     }
 
     private void back() {
+        LinkService.view = -1;
+        LinkService.milestone = false;
         if (LinkService.finished) LinkService.finished = false;
         else if (LinkService.step > 0) LinkService.step--;
         else { wake(); return; }

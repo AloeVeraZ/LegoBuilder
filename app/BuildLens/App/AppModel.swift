@@ -44,6 +44,11 @@ final class AppModel {
     }
     var isSubBuild: Bool { currentStep?.isSubAssembly ?? false }
 
+    /// The side the model was last turned to by hand, until the step changes.
+    private(set) var userView: Int?
+    /// The side the glasses show the current step from.
+    var glassesView: Int { userView ?? currentStep?.view ?? 0 }
+
     var focusMode = false {
         didSet {
             scene?.dimPrevious = focusMode
@@ -87,7 +92,14 @@ final class AppModel {
             scene.showFinished(animated: false)
             self.model = model
             self.scene = scene
-            self.orbit = OrbitController(scene: scene)
+            let orbit = OrbitController(scene: scene)
+            self.orbit = orbit
+            // Turning the model by hand: the glasses switch to the same side.
+            orbit.onUserView = { [weak self] view in
+                guard let self, !self.showingFinished, view != self.glassesView else { return }
+                self.userView = view
+                self.glasses.send(step: self.step, finished: false, view: view)
+            }
 
             sync.onRemoteStep = { [weak self] index in
                 guard let self else { return }
@@ -110,6 +122,11 @@ final class AppModel {
                     if !self.showingFinished { self.finish(tellGlasses: false) }
                 } else if replay, index == self.step {
                     self.replay(broadcast: false)
+                } else if index == self.step + 1, !self.showingFinished, self.milestoneTask == nil,
+                          let message = self.milestone(after: self.step) {
+                    // The glasses moved on past the end of a part of the build: they are
+                    // showing their own "good job", so the phone does the same.
+                    self.celebrate(message, tellGlasses: false)
                 } else if index != self.step || self.showingFinished || self.finishTask != nil {
                     self.go(to: index, tellGlasses: false)
                 }
@@ -205,8 +222,9 @@ final class AppModel {
 
     /// The last piece is pushed home, then the card shows for two seconds, goes away, and
     /// only then does the next part of the build appear.
-    private func celebrate(_ message: Milestone) {
+    private func celebrate(_ message: Milestone, tellGlasses: Bool = true) {
         let settle = scene?.seatWaiting() ?? 0
+        if tellGlasses { glasses.send(step: step, finished: false, milestone: true) }
         milestoneTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
@@ -308,6 +326,7 @@ final class AppModel {
         finishTask?.cancel()
         finishTask = nil
         let changed = index != step || showingFinished
+        if changed || force { userView = nil }
         step = index
         showingFinished = false
         if arPhase != .building { arPhase = .building }

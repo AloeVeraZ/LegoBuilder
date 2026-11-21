@@ -6,42 +6,68 @@ import SwiftUI
 struct GlassesPreview: View {
     @Environment(AppModel.self) private var app
     /// Which picture is up right now.
-    @State private var frame = (step: 0, variant: "")
+    @State private var frame = (step: 0, view: 0, variant: "")
     /// The step the display last settled on, to know when we moved forward by one.
     @State private var settledStep = -1
+
+    /// The side the display last settled on, for the slot-in frames of the step being left.
+    @State private var settledView = 0
 
     private struct Playing: Hashable {
         let step: Int
         let finished: Bool
+        let view: Int
+        let milestone: Bool
     }
 
     /// The same timing as the glasses app (glasses/.../MainActivity.java).
     private func play() async {
         let step = app.step
+        let view = app.glassesView
         let pause = { (seconds: Double) in try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
-        if app.showingFinished {
-            frame = (step, "-a")
+        if app.showingFinished || app.milestone != nil {
+            // The last piece slots in and the finished picture stays up.
+            let from = settledStep == step ? settledView : view
+            frame = (step, from, "-a")
             await pause(0.22)
             guard !Task.isCancelled else { return }
-            frame = (step, "-b")
-            settledStep = -1
+            frame = (step, from, "-b")
+            if app.showingFinished { settledStep = -1 }
             return
         }
         if settledStep >= 0, step == settledStep + 1 {
-            frame = (settledStep, "-a")
+            let before = settledStep
+            frame = (before, settledView, "-a")
             await pause(0.11)
             guard !Task.isCancelled else { return }
-            frame = (settledStep, "-b")
+            frame = (before, settledView, "-b")
             await pause(0.32)
             guard !Task.isCancelled else { return }
+            // Where the new step is seen from another side, the finished step turns round to it.
+            if let model = app.model, settledView == model.steps[before].view, view != settledView {
+                for n in 1 ... 4 where model.glassesTurnURL(step: before, frame: n) != nil {
+                    frame = (before, 0, "r\(n)")
+                    await pause(0.09)
+                    guard !Task.isCancelled else { return }
+                }
+            }
         }
         settledStep = step
+        settledView = view
         var pressed = false
         while !Task.isCancelled {
-            frame = (step, pressed ? "-w" : "")
+            frame = (step, view, pressed ? "-w" : "")
             pressed.toggle()
             await pause(0.45)
         }
+    }
+
+    private var frameURL: URL? {
+        guard let model = app.model else { return nil }
+        if frame.variant.hasPrefix("r"), let n = Int(frame.variant.dropFirst()) {
+            return model.glassesTurnURL(step: frame.step, frame: n)
+        }
+        return model.glassesFrameURL(step: frame.step, view: frame.view, variant: frame.variant)
     }
 
     var body: some View {
@@ -85,8 +111,7 @@ struct GlassesPreview: View {
     private var display: some View {
         ZStack {
             Color.black
-            if let model = app.model, let url = model.glassesFrameURL(step: frame.step, variant: frame.variant),
-               let image = ImageCache.shared.image(at: url) {
+            if let url = frameURL, let image = ImageCache.shared.image(at: url) {
                 Image(platformImage: image)
                     .resizable()
                     .scaledToFit()
@@ -101,7 +126,8 @@ struct GlassesPreview: View {
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
         // Restarts whenever the step (or finished state) changes, and plays what the real
         // glasses play: the last piece slots in, then the new one waits with a bouncing arrow.
-        .task(id: Playing(step: app.step, finished: app.showingFinished)) { await play() }
+        .task(id: Playing(step: app.step, finished: app.showingFinished, view: app.glassesView,
+                          milestone: app.milestone != nil)) { await play() }
         .clipShape(Theme.shape(Theme.Radius.tile))
         .overlay {
             Theme.shape(Theme.Radius.tile)
@@ -118,6 +144,11 @@ struct GlassesPreview: View {
             if app.showingFinished {
                 Label("DONE", systemImage: "checkmark")
                     .font(hudFont(40, weight: .bold, scale: scale))
+            } else if let milestone = app.milestone {
+                Text(milestone.title.uppercased())
+                    .font(hudFont(36, weight: .bold, scale: scale))
+                Text(milestone.detail.uppercased())
+                    .font(hudFont(22, weight: .semibold, scale: scale))
             } else {
                 Text("STEP \(app.step + 1)/\(app.stepCount)")
                     .font(hudFont(36, weight: .bold, scale: scale))

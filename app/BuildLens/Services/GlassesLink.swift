@@ -44,10 +44,17 @@ final class GlassesLink {
 
     /// `replay`: show the same step again from the start (the glasses' double click, or the
     /// phone's replay button).
-    func send(step: Int, finished: Bool, replay: Bool = false) {
+    /// `view`: show the step from one of the four sides (the phone was turned by hand).
+    /// `milestone`: the step is done and the "good job" moment is on; the next step follows.
+    func send(step: Int, finished: Bool, replay: Bool = false, view: Int? = nil, milestone: Bool = false) {
         last = (step, finished)
         guard let connection, connection.state == .ready else { return }
-        let line = "{\"step\":\(step),\"finished\":\(finished)\(replay ? ",\"replay\":true" : "")\(instructionsOpen ? ",\"open\":true" : "")}\n"
+        var line = "{\"step\":\(step),\"finished\":\(finished)"
+        if replay { line += ",\"replay\":true" }
+        if let view { line += ",\"view\":\(view)" }
+        if milestone { line += ",\"milestone\":true" }
+        if instructionsOpen { line += ",\"open\":true" }
+        line += "}\n"
         connection.send(content: Data(line.utf8), completion: .contentProcessed { _ in })
     }
 

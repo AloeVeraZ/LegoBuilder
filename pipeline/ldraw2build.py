@@ -489,6 +489,7 @@ class StepBuilder:
         self.built = set()
         self.use_count = {}
         self.part_files = {}
+        self.views = {}
 
     def count_uses(self, f: SourceFile, mult: int, depth=0):
         if depth > MAX_DEPTH:
@@ -520,6 +521,8 @@ class StepBuilder:
                 step = {"assembly": asm_id, "added": added}
                 if moves:
                     step["moves"] = moves
+                # Each assembly starts from the usual view and remembers where it was left.
+                step["view"] = self.views[asm_id] = step_view(moves, self.views.get(asm_id, 0))
                 self.steps.append(step)
 
         for raw in f.lines:
@@ -593,6 +596,34 @@ class StepBuilder:
             all_ids += ids
         close_step()
         return all_ids
+
+
+# What each of the four views shows: 0 front-right (the usual one), 1 front-left,
+# 2 back-right, 3 back-left.
+VIEW_SHOWS = [{"front", "right"}, {"front", "left"}, {"back", "right"}, {"back", "left"}]
+# How far apart two views are, in quarter turns of the camera.
+VIEW_TURN = {(a, b): min(abs(x - y), 4 - abs(x - y))
+             for a, x in zip(range(4), (0, 3, 1, 2)) for b, y in zip(range(4), (0, 3, 1, 2))}
+
+
+def step_view(moves, previous: int) -> int:
+    """Which side a step is looked at from. The view only turns when it has to: if the
+    side the new pieces come in from is already visible, it stays where it is (turning
+    the model for no reason is unpleasant, and worse for anyone sensitive to motion).
+    Otherwise it takes the smallest turn that shows them."""
+    needed = set()
+    for m in moves:
+        x, _, z = m["push"]                      # direction of travel, app axes (front = +Z)
+        if x > 0.9: needed.add("left")           # travelling +X: it waits on the left
+        if x < -0.9: needed.add("right")
+        if z > 0.9: needed.add("back")           # travelling forwards: it waits behind
+        if z < -0.9: needed.add("front")
+    if {"left", "right"} <= needed: needed -= {"left", "right"}      # both sides at once: no view shows both
+    if {"front", "back"} <= needed: needed -= {"front", "back"}
+    if needed <= VIEW_SHOWS[previous]:
+        return previous
+    fits = [q for q in range(4) if needed <= VIEW_SHOWS[q]]
+    return min(fits, key=lambda q: (VIEW_TURN[(previous, q)], q))
 
 
 def part_key(name: str) -> str:
