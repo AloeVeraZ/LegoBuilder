@@ -513,6 +513,7 @@ class StepBuilder:
         if depth > MAX_DEPTH:
             return []
         all_ids, added, moves, push = [], [], [], None
+        order = 0                       # default: pieces of a step go on one after another
 
         def close_step():
             if emit and added:
@@ -528,13 +529,17 @@ class StepBuilder:
             if toks[0] == "0":
                 if len(toks) >= 2 and toks[1].upper() in ("STEP", "ROTSTEP"):
                     close_step()
-                    added, moves = [], []
+                    added, moves, order = [], [], 0
                 elif len(toks) >= 5 and toks[1].upper() == "!PUSH":
-                    # "0 !PUSH x y z": the next part (or sub-model) is pushed into place along
-                    # this direction, given in this file's own LDraw axes.
+                    # "0 !PUSH x y z [ORDER n] [STILL]": the next part (or sub-model) is pushed
+                    # into place along this direction, given in this file's own LDraw axes.
+                    # ORDER n: pieces with the same n go on together, lower n first.
+                    # STILL: the piece is simply there waiting, it does not glide in.
                     try:
-                        push = [float(v) for v in toks[2:5]]
-                    except ValueError:
+                        extra = [t.upper() for t in toks[5:]]
+                        push = {"dir": [float(v) for v in toks[2:5]], "still": "STILL" in extra,
+                                "order": int(extra[extra.index("ORDER") + 1]) if "ORDER" in extra else None}
+                    except (ValueError, IndexError):
                         push = None
                 continue
             if toks[0] != "1" or len(toks) < 15:
@@ -571,7 +576,13 @@ class StepBuilder:
                 ids = [len(self.instances) - 1]
             if push is not None and emit:
                 # Stored in the app's axes (+Y up), relative to the assembly being shown.
-                moves.append({"pieces": list(ids), "push": [push[0], -push[1], -push[2]]})
+                d = push["dir"]
+                n = order if push["order"] is None else push["order"]
+                order = max(order, n + 1)
+                move = {"pieces": list(ids), "push": [d[0], -d[1], -d[2]], "order": n}
+                if push["still"]:
+                    move["still"] = True
+                moves.append(move)
             push = None
             added += ids
             all_ids += ids

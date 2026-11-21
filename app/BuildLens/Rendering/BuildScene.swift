@@ -21,8 +21,13 @@ final class BuildScene {
     private var materialCache: [String: RealityKit.Material] = [:]
     private var shownStep = -2          // -1 = finished model
     private var token = 0               // invalidates pending animations when the step changes
-    private var waiting: [Int: Transform] = [:]   // new pieces of the shown step, held off their place
-    private static let clickTime = 0.5        // quick, but you see it travel and settle
+    private struct Waiting {
+        let hover: Transform                    // where the piece is held, off its place
+        let order: Int                          // pieces with the same order are pushed in together
+    }
+    private var waiting: [Int: Waiting] = [:]   // new pieces of the shown step
+    private static let slotTime = 0.9           // long enough to watch the piece travel and seat
+    private static let betweenSlots = 0.15
 
     /// Show earlier pieces faded so the new ones stand out.
     var dimPrevious = false
@@ -89,11 +94,11 @@ final class BuildScene {
         let added = Set(info.added)
         let visible = Set(info.visible)
 
-        // Pieces still waiting from the step before click into place first.
-        var clicking: [Int: Transform] = [:]
-        if animated, !force, previous >= 0, previous == index - 1,
+        // Pieces still waiting from the step before are pushed home first.
+        var slotting: [Int: Waiting] = [:]
+        if animated, previous >= 0, previous == index - 1,
            model.steps[previous].assembly.id == info.assembly.id {
-            clicking = waiting
+            slotting = waiting
         }
         waiting.removeAll()
 
@@ -106,81 +111,82 @@ final class BuildScene {
             entity.stopAllAnimations()
             let look: Look = added.contains(i) ? .highlight : (dimPrevious ? .dimmed : .normal)
             entity.model?.materials = materials(for: model.package.instances[i], look: look)
-            let seated = Transform(matrix: local * model.instanceMatrices[i])
-            if let from = clicking[i] {
-                entity.transform = from
-                _ = entity.move(to: seated, relativeTo: entity.parent, duration: Self.clickTime, timingFunction: .easeInOut)
-            } else {
-                entity.transform = seated
-            }
+            if slotting[i] == nil { entity.transform = Transform(matrix: local * model.instanceMatrices[i]) }
             entity.isEnabled = true
         }
-        if !clicking.isEmpty { clickWhenSeated() }
+        let wait = slotIn(slotting) { Transform(matrix: local * self.model.instanceMatrices[$0]) }
         let sameAssembly = previous >= 0 && model.steps[previous].assembly.id == info.assembly.id
         frame(step: info, glide: animated && sameAssembly)
         let moves = insertionMoves(for: info, local: local)
-        let wait = clicking.isEmpty ? 0 : Self.clickTime + 0.12
         bringIn(moves, local: local, animated: animated, after: wait)
         let arrival = moves.map(\.delay).max().map { wait + $0 + 0.55 } ?? 0
         placeArrows(for: moves, local: local, after: animated ? arrival : 0)
     }
 
-    /// Slots the waiting pieces home without moving on (used before a "well done" moment).
-    func seatWaiting() {
-        guard shownStep >= 0, !waiting.isEmpty else { return }
-        token += 1
-        let local = model.assemblyMatrices[model.steps[shownStep].assembly.id].inverse
-        for (i, from) in waiting {
+    /// Pushes waiting pieces home so you see them travel and seat: one group after another,
+    /// in the order you would do it by hand. Returns how long the whole thing takes.
+    @discardableResult
+    private func slotIn(_ pieces: [Int: Waiting], seated: (Int) -> Transform) -> Double {
+        guard !pieces.isEmpty else { return 0 }
+        let current = token
+        let orders = Set(pieces.values.map(\.order)).sorted()
+        let stride = Self.slotTime + Self.betweenSlots
+        for (i, held) in pieces {
             let entity = entities[i]
-            entity.stopAllAnimations()
-            entity.model?.materials = materials(for: model.package.instances[i], look: .normal)
-            entity.transform = from
-            _ = entity.move(to: Transform(matrix: local * model.instanceMatrices[i]), relativeTo: entity.parent,
-                            duration: Self.clickTime, timingFunction: .easeInOut)
+            entity.transform = held.hover
+            let target = seated(i)
+            let delay = Double(orders.firstIndex(of: held.order) ?? 0) * stride
+            Task { @MainActor [weak self, weak entity] in
+                if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+                guard let self, let entity, self.token == current else { return }
+                _ = entity.move(to: target, relativeTo: entity.parent, duration: Self.slotTime, timingFunction: .easeInOut)
+            }
         }
-        waiting.removeAll()
-        for a in arrows { a.stopAllAnimations(); a.isEnabled = false }
-        clickWhenSeated()
+        return Double(orders.count) * stride
     }
 
-    /// The soft click, timed to the moment the piece reaches its seat.
-    private func clickWhenSeated() {
-        let current = token
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64((Self.clickTime - 0.04) * 1_000_000_000))
-            guard let self, self.token == current else { return }
-            ClickSound.shared.play()
+    /// Pushes the waiting pieces home without moving on (used before a "well done" moment).
+    /// Returns how long it takes.
+    @discardableResult
+    func seatWaiting() -> Double {
+        guard shownStep >= 0, !waiting.isEmpty else { return 0 }
+        token += 1
+        let local = model.assemblyMatrices[model.steps[shownStep].assembly.id].inverse
+        for i in waiting.keys {
+            entities[i].stopAllAnimations()
+            entities[i].model?.materials = materials(for: model.package.instances[i], look: .normal)
         }
+        let time = slotIn(waiting) { Transform(matrix: local * self.model.instanceMatrices[$0]) }
+        waiting.removeAll()
+        for a in arrows { a.stopAllAnimations(); a.isEnabled = false }
+        return time
     }
 
     /// The whole finished model, every piece in its final place.
-    func showFinished(animated: Bool) {
+    @discardableResult
+    func showFinished(animated: Bool) -> Double {
         let shownWasMainModel = shownStep >= 0 && !model.steps[shownStep].isSubAssembly
         shownStep = -1
         token += 1
-        let clicking = animated && shownWasMainModel ? waiting : [:]
+        let slotting = animated && shownWasMainModel ? waiting : [:]
         waiting.removeAll()
         for (i, entity) in entities.enumerated() {
             entity.stopAllAnimations()
             entity.model?.materials = materials(for: model.package.instances[i], look: .normal)
-            let seated = Transform(matrix: model.instanceMatrices[i])
-            if let from = clicking[i] {
-                entity.transform = from
-                _ = entity.move(to: seated, relativeTo: entity.parent, duration: Self.clickTime, timingFunction: .easeInOut)
-            } else {
-                entity.transform = seated
-            }
+            if slotting[i] == nil { entity.transform = Transform(matrix: model.instanceMatrices[i]) }
             entity.isEnabled = true
         }
-        if !clicking.isEmpty { clickWhenSeated() }
+        // The last pieces are pushed home before anything else happens.
+        let wait = slotIn(slotting) { Transform(matrix: self.model.instanceMatrices[$0]) }
         for a in arrows { a.stopAllAnimations(); a.isEnabled = false }
         frame(assembly: model.package.assemblies[0])
         turntable.stopAllAnimations()
         turntable.transform = Transform()
-        if animated {
+        if animated, wait == 0 {
             turntable.transform = Transform(scale: .one, rotation: simd_quatf(angle: -.pi * 0.6, axis: [0, 1, 0]), translation: .zero)
             _ = turntable.move(to: Transform(), relativeTo: root, duration: 1.0, timingFunction: .easeOut)
         }
+        return wait
     }
 
     /// Re-applies the current step (for example after toggling dimming).
@@ -281,6 +287,8 @@ final class BuildScene {
         let gap: Float                  // where it waits until the next step
         let delay: Double
         let group: Int                  // pieces with the same group share one arrow
+        let order: Int                  // pieces with the same order are pushed in together
+        let still: Bool                 // simply there waiting, instead of gliding in
     }
 
     private enum PieceKind { case shaft, wheel, block }
@@ -323,9 +331,11 @@ final class BuildScene {
             for (group, authored) in step.moves.enumerated() where authored.push.count == 3 {
                 let push = SIMD3<Float>(authored.push[0], authored.push[1], authored.push[2])
                 guard simd_length(push) > 1e-5 else { continue }
+                let order = authored.order ?? group
                 for i in authored.pieces where newIDs.contains(i) {
                     moves.append(Move(piece: i, direction: -simd_normalize(push), distance: far, gap: gap,
-                                      delay: 0.1 + Double(min(group, 10)) * 0.18, group: group + 1))
+                                      delay: 0.1 + Double(min(order, 10)) * 0.4, group: group + 1,
+                                      order: order, still: authored.still ?? false))
                 }
             }
             return moves
@@ -333,7 +343,7 @@ final class BuildScene {
 
         // A sub-build being attached: everything comes down together.
         if !step.isSubAssembly, ids.count > 1, ids.contains(where: subBuilt.contains) {
-            return ids.map { Move(piece: $0, direction: up, distance: far, gap: gap, delay: 0.15, group: 0) }
+            return ids.map { Move(piece: $0, direction: up, distance: far, gap: gap, delay: 0.15, group: 0, order: 0, still: false) }
         }
 
         var moves: [Move] = []
@@ -362,7 +372,8 @@ final class BuildScene {
                 // The first piece of a build is the base: it just sits there, nothing to press it into.
                 let isBase = before.isEmpty && pass == .block
                 moves.append(Move(piece: i, direction: direction, distance: distance, gap: isBase ? 0 : gap,
-                                  delay: 0.12 + Double(min(order, 10)) * 0.14, group: moves.count + 1))
+                                  delay: 0.12 + Double(min(order, 10)) * 0.4, group: moves.count + 1,
+                                  order: order, still: false))
                 order += 1
             }
         }
@@ -378,8 +389,8 @@ final class BuildScene {
             let seated = Transform(matrix: local * model.instanceMatrices[move.piece])
             var hover = seated
             hover.translation += move.direction * move.gap
-            if move.gap > 0 { waiting[move.piece] = hover }
-            guard animated else {
+            if move.gap > 0 { waiting[move.piece] = Waiting(hover: hover, order: move.order) }
+            guard animated, !move.still else {
                 entity.transform = hover
                 continue
             }

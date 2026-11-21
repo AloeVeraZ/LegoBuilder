@@ -62,6 +62,10 @@ struct BuildPackage: Decodable {
     struct Move: Decodable {
         let pieces: [Int]
         let push: [Float]
+        /// Moves with the same order happen together; lower orders first.
+        let order: Int?
+        /// The pieces are simply there waiting instead of gliding in.
+        let still: Bool?
     }
 
     let setInfo: SetInfo

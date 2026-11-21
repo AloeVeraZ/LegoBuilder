@@ -33,6 +33,7 @@ final class AppModel {
     }
     private(set) var milestone: Milestone?
     private var milestoneTask: Task<Void, Never>?
+    private var finishTask: Task<Void, Never>?
 
     /// What the current step is part of: the main build, or a sub-build made on the side.
     var sectionTitle: String {
@@ -134,7 +135,7 @@ final class AppModel {
 
     func next() {
         // Next during the "well done" moment skips the wait.
-        if milestone != nil { return advancePastMilestone() }
+        if milestoneTask != nil { return advancePastMilestone() }
         guard step + 1 < stepCount else { return finish() }
         if let milestone = milestone(after: step) {
             celebrate(milestone)
@@ -144,7 +145,7 @@ final class AppModel {
     }
 
     func back() {
-        if milestone != nil {
+        if milestoneTask != nil {
             clearMilestone()
             go(to: step, force: true)
         } else if showingFinished {
@@ -168,14 +169,21 @@ final class AppModel {
         return Milestone(title: "Good job!", detail: "Set this part aside. Next: the \(coming.assembly.name.lowercased()).")
     }
 
+    /// The last piece is pushed home, then the card shows for two seconds, goes away, and
+    /// only then does the next part of the build appear.
     private func celebrate(_ message: Milestone) {
-        scene?.seatWaiting()
-        milestone = message
-        Haptics.success()
-        if readAloud { speaker.say("\(message.title) \(message.detail)") }
+        let settle = scene?.seatWaiting() ?? 0
         milestoneTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_900_000_000)
-            guard let self, !Task.isCancelled, self.milestone != nil else { return }
+            try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.milestone = message
+            Haptics.success()
+            if self.readAloud { self.speaker.say("\(message.title) \(message.detail)") }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            self.milestone = nil
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
             self.advancePastMilestone()
         }
     }
@@ -201,17 +209,26 @@ final class AppModel {
         go(to: 0, force: true)
     }
 
+    /// The last pieces are pushed home first; "You built it" only appears once they are in.
     func finish() {
-        showingFinished = true
-        scene?.showFinished(animated: true)
+        guard !showingFinished, finishTask == nil else { return }
+        let settle = scene?.showFinished(animated: true) ?? 0
         glasses.send(step: step, finished: true)
-        Haptics.success()
-        if readAloud, let model { speaker.say("You built the \(model.name)!") }
+        finishTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.finishTask = nil
+            self.showingFinished = true
+            Haptics.success()
+            if self.readAloud, let model = self.model { self.speaker.say("You built the \(model.name)!") }
+        }
     }
 
     func go(to index: Int, broadcast: Bool = true, force: Bool = false) {
         guard let model, index >= 0, index < model.steps.count else { return }
         clearMilestone()
+        finishTask?.cancel()
+        finishTask = nil
         let changed = index != step || showingFinished
         step = index
         showingFinished = false

@@ -285,16 +285,21 @@ SPLIT_FLIPPED = rot(-X, Z)
 # place along this line, shows an arrow, and slots it in on the next step.
 DOWN, FROM_RIGHT, FROM_LEFT, FROM_FRONT, FROM_BEHIND = Y, -X, X, Z, -Z
 
-def push(direction, line):
-    return "0 !PUSH " + " ".join(f"{v:g}" for v in direction) + "\n" + line
+def push(direction, line, order=None, still=False):
+    """order: pieces of a step go on one after another unless they share an order number.
+    still: the piece is simply there waiting instead of gliding in."""
+    meta = "0 !PUSH " + " ".join(f"{v:g}" for v in direction)
+    if order is not None: meta += f" ORDER {order}"
+    if still: meta += " STILL"
+    return meta + "\n" + line
 
-def axle_pins(z, sides=("R", "L")):
+def axle_pins(z, sides=("R", "L"), order=None):
     """3749: the cross-shaped axle end goes through the split block's arm into the cross
     block (both are axle holes); the round pin end stays out for the wheel to spin on.
     In the part's own frame the axle end is +X and the pin end is -X."""
     out = []
-    if "R" in sides: out.append(push(FROM_RIGHT, ref(TAN, (20, AXLE_Y, z), SHAFT_NX, "3749.dat")))
-    if "L" in sides: out.append(push(FROM_LEFT, ref(TAN, (-20, AXLE_Y, z), SHAFT_X, "3749.dat")))
+    if "R" in sides: out.append(push(FROM_RIGHT, ref(TAN, (20, AXLE_Y, z), SHAFT_NX, "3749.dat"), order))
+    if "L" in sides: out.append(push(FROM_LEFT, ref(TAN, (-20, AXLE_Y, z), SHAFT_X, "3749.dat"), order))
     return out
 
 def seated_pin(z, hole_y=AXLE_Y):
@@ -307,7 +312,7 @@ rear = [
     axle_pins(REAR_WHEELS[1], sides="R"),                                                        # 3
     [push(DOWN, ref(BLK, (0, AXLE_Y, PIVOT_Z), SPLIT_FLIPPED, "92907.dat"))]
     + axle_pins(REAR_WHEELS[0], sides="R"),                                                      # 4
-    axle_pins(REAR_WHEELS[0], sides="L") + axle_pins(REAR_WHEELS[1], sides="L"),                 # 5
+    axle_pins(REAR_WHEELS[0], sides="L", order=0) + axle_pins(REAR_WHEELS[1], sides="L", order=0),   # 5 (together)
     [seated_pin(PIVOT_Z)],                                                                       # 6
 ]
 
@@ -336,8 +341,8 @@ BEHIND = rot(-X, Y)          # turned 180 degrees
 cab = model("Cab.ldr", [
     [ref(YEL, (0, 0, 0), I, "7944.dat"),
      push(FROM_BEHIND, ref(TAN, (0, 0, 5), rot(-Z, Y), "32002.dat"))],                           # 14
-    [push(FROM_BEHIND, ref(BLK, (-20, 0, 15), SHAFT_Z, "32062.dat")),
-     push(FROM_BEHIND, ref(BLK, (20, 0, 15), SHAFT_Z, "32062.dat"))],                            # 15
+    [push(FROM_BEHIND, ref(BLK, (-20, 0, 15), SHAFT_Z, "32062.dat"), order=0),
+     push(FROM_BEHIND, ref(BLK, (20, 0, 15), SHAFT_Z, "32062.dat"), order=0)],                   # 15 (together)
 ])
 CAB_FRONT = (0, HOLE_Y, CONNECTOR_Z - 15)
 CAB_REAR = (0, HOLE_Y, CONNECTOR_Z + 15)
@@ -359,9 +364,12 @@ bed_half = model("Tipper Bed Half.ldr", [
 BED_POS = (0, TOP, PIVOT_Z + 30)
 
 WHEEL_X = 30                 # rims sit on the pin ends, which reach from x = 20 to 40
-def wheel(side_x, z, part, colour):
+# Step 23, one axle at a time from the front: the grey rims are already waiting beside their
+# pins, the black tyres come in onto them (left and right together), and then each pair of
+# finished wheels is pushed onto its pins.
+def wheel(side_x, z, part, colour, row, still):
     turn, way = (WHEEL_R, FROM_RIGHT) if side_x > 0 else (WHEEL_L, FROM_LEFT)
-    return push(way, ref(colour, (side_x, AXLE_Y, z), turn, part))
+    return push(way, ref(colour, (side_x, AXLE_Y, z), turn, part), order=row, still=still)
 
 main = model("42233-3 Dump Truck.ldr", rear + [
     [push(DOWN, ref(16, (0, 0, 0), I, "Front Unit.ldr"))],                                       # 13
@@ -369,10 +377,11 @@ main = model("42233-3 Dump Truck.ldr", rear + [
     [push(FROM_BEHIND, ref(YEL, CAB_REAR, BEHIND, "7944.dat"))],                                 # 17
     [push(DOWN, ref(YEL, LBEAM_POS, LBEAM, "32140.dat")),
      push(FROM_RIGHT, ref(BLK, (0, UPPER, LBEAM_PIN_Z), SHAFT_X, "32062.dat"))],                 # 18
-    [push(FROM_RIGHT, ref(16, BED_POS, I, "Tipper Bed Half.ldr")),
-     push(FROM_LEFT, ref(16, BED_POS, BEHIND, "Tipper Bed Half.ldr"))],                          # 22
-    [wheel(x, z, part, colour) for part, colour in (("42610.dat", LBG), ("50951.dat", BLK))
-     for x in (WHEEL_X, -WHEEL_X) for z in [FRONT_AXLE_Z] + REAR_WHEELS],                        # 23
+    [push(FROM_RIGHT, ref(16, BED_POS, I, "Tipper Bed Half.ldr"), order=0),
+     push(FROM_LEFT, ref(16, BED_POS, BEHIND, "Tipper Bed Half.ldr"), order=0)],                 # 22 (together)
+    [wheel(x, z, part, colour, row, still)
+     for part, colour, still in (("42610.dat", LBG, True), ("50951.dat", BLK, False))
+     for row, z in enumerate([FRONT_AXLE_Z] + REAR_WHEELS) for x in (WHEEL_X, -WHEEL_X)],        # 23
 ])
 
 # The main model references the cab after step 13 but its own steps (14-15) must come
