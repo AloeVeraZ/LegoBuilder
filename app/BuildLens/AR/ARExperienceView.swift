@@ -279,9 +279,9 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         tumbled = true
     }
 
-    /// The home button: back to how the step is meant to be seen, at its normal size.
+    /// The home button: turns the model back to how this step is meant to be seen. The
+    /// size is left exactly as it was pinched.
     private func goHome() {
-        userZoom = 1
         settle(duration: 0.7)
     }
 
@@ -385,7 +385,7 @@ final class ARCoordinator: NSObject, ARSessionDelegate {
         let seen = simd_normalize(view.cameraTransform.rotation.inverse * anchorTurn * root.orientation)
         let cube = app.viewCube
         if abs(simd_dot(seen.vector, cube.rotation.vector)) < 0.99998 { cube.rotation = seen }
-        let turned = (tumbled || abs(userZoom - 1) > 0.05) && !(glide?.endsAtRest ?? false)
+        let turned = tumbled && !(glide?.endsAtRest ?? false)
         if cube.turned != turned { cube.turned = turned }
     }
 
