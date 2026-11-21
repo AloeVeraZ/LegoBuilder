@@ -76,6 +76,9 @@ final class GlassesLink {
     /// The glasses have scanned the tag and placed the build.
     var onPlaced: (() -> Void)?
 
+    /// A camera picture from the glasses over Bluetooth (header line, then JPEG).
+    var onPicture: ((Data) -> Void)?
+
     /// The model was turned or zoomed on the glasses.
     var onRemoteView: ((Double, Double?, Double?) -> Void)?
 
@@ -128,6 +131,7 @@ final class GlassesLink {
     private var bleGreeted = false
 
     private func startBluetooth() {
+        ble.onPicture = { [weak self] picture in self?.onPicture?(picture) }
         ble.onData = { [weak self] data in
             guard let self else { return }
             self.bleBuffer.append(data)

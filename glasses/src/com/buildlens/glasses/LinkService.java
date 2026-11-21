@@ -297,6 +297,19 @@ public class LinkService extends Service {
         });
     }
 
+    /** A small camera picture for phones taking them over Bluetooth (they pass it to the Mac). */
+    static boolean picturesWanted() {
+        LinkService s = instance;
+        BleLink b = s == null ? null : s.ble;
+        return b != null && b.wantsPictures();
+    }
+
+    static void sendPicture(byte[] framed) {
+        LinkService s = instance;
+        BleLink b = s == null ? null : s.ble;
+        if (b != null) s.sender.execute(() -> b.sendPicture(framed));
+    }
+
     private void restartBluetooth() {
         BleLink b = ble;
         if (b == null) return;

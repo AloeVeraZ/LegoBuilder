@@ -36,6 +36,9 @@ final class BleLink {
     static final UUID SERVICE = UUID.fromString("6b1d0001-6c6f-4a7e-9b5a-42756c644c6e");
     static final UUID RX = UUID.fromString("6b1d0002-6c6f-4a7e-9b5a-42756c644c6e");   // phone -> glasses
     static final UUID TX = UUID.fromString("6b1d0003-6c6f-4a7e-9b5a-42756c644c6e");   // glasses -> phone
+    /** The camera's picture, small, for the phone to pass on to the Mac: each one is its
+     *  length (4 bytes, big-endian), then a JSON line (LiveFeed's header), then the JPEG. */
+    static final UUID FEED = UUID.fromString("6b1d0004-6c6f-4a7e-9b5a-42756c644c6e");
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     private static final String TAG = LinkService.TAG;
 
@@ -50,7 +53,7 @@ final class BleLink {
     private final Lines lines;
     private BluetoothGattServer server;
     private BluetoothLeAdvertiser advertiser;
-    private BluetoothGattCharacteristic tx;
+    private BluetoothGattCharacteristic tx, feed;
 
     /** Per phone: subscribed, packet size, lines being received, packets waiting to go. */
     private static final class Phone {
@@ -58,6 +61,9 @@ final class BleLink {
         volatile int payload = 20;
         final ByteArrayOutputStream incoming = new ByteArrayOutputStream();
         final ArrayDeque<byte[]> outgoing = new ArrayDeque<>();
+        /** The picture being sent: only ever the newest, and only after the lines. */
+        final ArrayDeque<byte[]> picture = new ArrayDeque<>();
+        volatile boolean wantsPictures;
         boolean sending;
     }
     private final Map<String, Phone> phones = new ConcurrentHashMap<>();
@@ -89,8 +95,13 @@ final class BleLink {
                     BluetoothGattCharacteristic.PERMISSION_READ);
             tx.addDescriptor(new BluetoothGattDescriptor(CCCD,
                     BluetoothGattDescriptor.PERMISSION_READ | BluetoothGattDescriptor.PERMISSION_WRITE));
+            feed = new BluetoothGattCharacteristic(FEED, BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+                    BluetoothGattCharacteristic.PERMISSION_READ);
+            feed.addDescriptor(new BluetoothGattDescriptor(CCCD,
+                    BluetoothGattDescriptor.PERMISSION_READ | BluetoothGattDescriptor.PERMISSION_WRITE));
             service.addCharacteristic(rx);
             service.addCharacteristic(tx);
+            service.addCharacteristic(feed);
             server.addService(service);
             advertiser = adapter.getBluetoothLeAdvertiser();
             if (advertiser == null) { Log.w(TAG, "bluetooth: this device cannot advertise"); return; }
@@ -134,19 +145,49 @@ final class BleLink {
         }
     }
 
-    /** Sends the next waiting packet unless one is still on its way (one at a time). */
+    /** True while a phone takes pictures (it has subscribed to them). */
+    boolean wantsPictures() {
+        for (Phone p : phones.values()) if (p.wantsPictures) return true;
+        return false;
+    }
+
+    /** A camera picture (already framed: length, header line, JPEG) for the phones taking them.
+     *  One that has not finished going yet is replaced by this newer one. */
+    void sendPicture(byte[] framed) {
+        if (server == null) return;
+        for (Map.Entry<String, Phone> e : phones.entrySet()) {
+            Phone p = e.getValue();
+            if (!p.wantsPictures) continue;
+            synchronized (p) {
+                if (!p.picture.isEmpty()) continue;       // still sending the last one: skip this
+                for (int at = 0; at < framed.length; at += p.payload) {
+                    int n = Math.min(p.payload, framed.length - at);
+                    byte[] piece = new byte[n];
+                    System.arraycopy(framed, at, piece, 0, n);
+                    p.picture.add(piece);
+                }
+            }
+            pump(e.getKey(), p);
+        }
+    }
+
+    /** Sends the next waiting packet unless one is still on its way (one at a time): the
+     *  lines first, then the picture. */
     private void pump(String address, Phone p) {
         byte[] piece;
+        BluetoothGattCharacteristic on;
         synchronized (p) {
-            if (p.sending || p.outgoing.isEmpty()) return;
-            piece = p.outgoing.poll();
+            if (p.sending) return;
+            if (!p.outgoing.isEmpty()) { piece = p.outgoing.poll(); on = tx; }
+            else if (!p.picture.isEmpty()) { piece = p.picture.poll(); on = feed; }
+            else return;
             p.sending = true;
         }
         try {
             BluetoothDevice device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(address);
-            synchronized (tx) {
-                tx.setValue(piece);
-                if (!server.notifyCharacteristicChanged(device, tx, false)) {
+            synchronized (this) {
+                on.setValue(piece);
+                if (!server.notifyCharacteristicChanged(device, on, false)) {
                     synchronized (p) { p.sending = false; }
                 }
             }
@@ -189,8 +230,13 @@ final class BleLink {
             Phone p = phones.get(device.getAddress());
             if (p != null && CCCD.equals(descriptor.getUuid())) {
                 boolean on = value != null && value.length > 0 && (value[0] & 1) != 0;
-                p.subscribed = on;
-                if (on) { lines.onPhoneReady(device); lines.onPhoneChanged(); }
+                if (FEED.equals(descriptor.getCharacteristic().getUuid())) {
+                    p.wantsPictures = on;
+                    Log.i(TAG, "bluetooth: phone " + (on ? "takes" : "stopped taking") + " pictures");
+                } else {
+                    p.subscribed = on;
+                    if (on) { lines.onPhoneReady(device); lines.onPhoneChanged(); }
+                }
             }
             if (needResponse) server.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, value);
         }

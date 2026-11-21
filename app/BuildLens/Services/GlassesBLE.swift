@@ -10,6 +10,12 @@ final class GlassesBLE: NSObject {
     static let service = CBUUID(string: "6b1d0001-6c6f-4a7e-9b5a-42756c644c6e")
     static let rx = CBUUID(string: "6b1d0002-6c6f-4a7e-9b5a-42756c644c6e")   // phone -> glasses
     static let tx = CBUUID(string: "6b1d0003-6c6f-4a7e-9b5a-42756c644c6e")   // glasses -> phone
+    /// The glasses' camera, small: length (4 bytes), a JSON header line, the JPEG.
+    static let feed = CBUUID(string: "6b1d0004-6c6f-4a7e-9b5a-42756c644c6e")
+
+    /// A whole camera picture from the glasses (header line, then JPEG), for the Mac.
+    var onPicture: ((Data) -> Void)?
+    private var pictureBuffer = Data()
 
     /// Bytes from the glasses (pieces of lines).
     var onData: ((Data) -> Void)?
@@ -59,6 +65,7 @@ final class GlassesBLE: NSObject {
         glasses = nil
         rxCharacteristic = nil
         queue.removeAll()
+        pictureBuffer.removeAll()
         // Look again in a moment (the glasses may be restarting or out of range).
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(2))
@@ -106,7 +113,7 @@ extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
         MainActor.assumeIsolated {
             print("ble: services", peripheral.services?.map(\.uuid) ?? [], error as Any)
             guard let service = peripheral.services?.first(where: { $0.uuid == Self.service }) else { return }
-            peripheral.discoverCharacteristics([Self.rx, Self.tx], for: service)
+            peripheral.discoverCharacteristics([Self.rx, Self.tx, Self.feed], for: service)
         }
     }
 
@@ -115,7 +122,7 @@ extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
             print("ble: characteristics", service.characteristics?.map(\.uuid) ?? [], error as Any)
             for c in service.characteristics ?? [] {
                 if c.uuid == Self.rx { rxCharacteristic = c }
-                if c.uuid == Self.tx { peripheral.setNotifyValue(true, for: c) }
+                if c.uuid == Self.tx || c.uuid == Self.feed { peripheral.setNotifyValue(true, for: c) }
             }
         }
     }
@@ -128,8 +135,26 @@ extension GlassesBLE: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == Self.tx, let value = characteristic.value else { return }
-        MainActor.assumeIsolated { onData?(value) }
+        guard let value = characteristic.value else { return }
+        if characteristic.uuid == Self.tx {
+            MainActor.assumeIsolated { onData?(value) }
+        } else if characteristic.uuid == Self.feed {
+            MainActor.assumeIsolated { picturePiece(value) }
+        }
+    }
+
+    /// Puts the picture back together from its packets and hands on each whole one.
+    private func picturePiece(_ piece: Data) {
+        pictureBuffer.append(piece)
+        while pictureBuffer.count >= 4 {
+            let b = [UInt8](pictureBuffer.prefix(4))
+            let length = Int(b[0]) << 24 | Int(b[1]) << 16 | Int(b[2]) << 8 | Int(b[3])
+            guard length > 0, length < 400_000 else { pictureBuffer.removeAll(); return }
+            guard pictureBuffer.count >= 4 + length else { return }
+            let start = pictureBuffer.startIndex + 4
+            onPicture?(Data(pictureBuffer[start ..< start + length]))
+            pictureBuffer = Data(pictureBuffer[(start + length)...])
+        }
     }
 
     nonisolated func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {

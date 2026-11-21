@@ -24,7 +24,7 @@ struct GlassesPreview: View {
     /// True while the live view shows the plugged-in glasses' camera.
     private var glassesLive: Bool {
         #if os(macOS)
-        return live && glasses.plugged
+        return live && (glasses.plugged || app.relayedFeed.plugged)
         #else
         return false
         #endif
@@ -34,13 +34,21 @@ struct GlassesPreview: View {
     private var liveCamera: any LiveCamera {
         #if os(macOS)
         if glasses.plugged { return glasses }
+        // The glasses over Bluetooth to the phone, the phone to this Mac by cable.
+        if app.relayedFeed.plugged { return app.relayedFeed }
         #endif
         return tracker
     }
 
     /// Only the Mac's own camera needs starting; the glasses' runs on the glasses.
     private func updateTracker() {
+        #if os(macOS)
+        // The Mac shows only the glasses' camera (plugged in, or passed on by the phone),
+        // never its own.
+        tracker.stop()
+        #else
         if live && !glassesLive { tracker.start() } else { tracker.stop() }
+        #endif
     }
 
     /// When the confetti went off (nil = none).
@@ -217,6 +225,10 @@ struct GlassesPreview: View {
         #if os(macOS)
         // Plugging the glasses in brings their camera up straight away.
         .onChange(of: glasses.plugged) { _, plugged in
+            if plugged { live = true }
+            updateTracker()
+        }
+        .onChange(of: app.relayedFeed.plugged) { _, plugged in
             if plugged { live = true }
             updateTracker()
         }

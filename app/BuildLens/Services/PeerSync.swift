@@ -40,6 +40,18 @@ final class PeerSync: NSObject {
     var onScanSkipped: (() -> Void)?
     var onEnd: (() -> Void)?
     var onWake: (() -> Void)?
+    var onPicture: ((Data) -> Void)?
+    var onBuilding: ((Bool) -> Void)?
+
+    /// The glasses' camera picture, on to the Mac. Only over the cable (too big for the rest).
+    func sendPicture(_ picture: Data) {
+        guard let data = try? JSONEncoder().encode(Message(picture: picture.base64EncodedString())) else { return }
+        usb.send(data)
+    }
+
+    func sendBuilding(_ building: Bool) {
+        send(Message(building: building))
+    }
 
     func sendWake() {
         send(Message(wake: true))
@@ -86,6 +98,10 @@ final class PeerSync: NSObject {
         var end: Bool?
         /// The phone is at the start: the Mac brings BuildLens up on its glasses.
         var wake: Bool?
+        /// The glasses' camera picture (base64: header line, then JPEG), phone to Mac by cable.
+        var picture: String?
+        /// The phone: the glasses are building (they placed the build), for the Mac's live view.
+        var building: Bool?
     }
 
     /// `name` is how this device appears to the others; defaults to the device name.
@@ -161,6 +177,8 @@ final class PeerSync: NSObject {
         if message.noscan == true { Task { @MainActor in self.onScanSkipped?() } }
         if message.end == true { Task { @MainActor in self.onEnd?() } }
         if message.wake == true { Task { @MainActor in self.onWake?() } }
+        if let building = message.building { Task { @MainActor in self.onBuilding?(building) } }
+        if let picture = message.picture, let data = Data(base64Encoded: picture) { Task { @MainActor in self.onPicture?(data) } }
         if let fade = message.fade { let voice = message.voice, aloud = message.aloud ?? false; Task { @MainActor in self.onSettings?(fade, voice, aloud) } }
         if let glasses = message.glasses { Task { @MainActor in self.onGlassesThroughMac?(glasses) } }
         if let spin = message.spin { let zoom = message.zoom, tilt = message.tilt; Task { @MainActor in self.onRemoteView?(spin, zoom, tilt) } }

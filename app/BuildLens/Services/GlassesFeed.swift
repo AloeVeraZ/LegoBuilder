@@ -156,6 +156,28 @@ final class GlassesFeed {
         }
     }
 
+    @ObservationIgnored private var staleCheck: Task<Void, Never>?
+    @ObservationIgnored private var relayed = 0
+
+    /// One picture passed on by the phone (header line, then JPEG). Without a newer one for a
+    /// few seconds the view goes back to waiting.
+    func receive(_ framed: Data) {
+        let framed = Data(framed)
+        guard let end = framed.firstIndex(of: 0x0A),
+              let head = try? JSONDecoder().decode(Header.self, from: framed[framed.startIndex ..< end]) else { return }
+        let jpeg = framed[framed.index(after: end)...]
+        guard jpeg.count == head.jpeg else { return }
+        took(head, Data(jpeg))
+        relayed += 1
+        if relayed % 20 == 1 { linkLog.info("picture from the phone: \(self.relayed) so far, \(head.w)x\(head.h)") }
+        staleCheck?.cancel()
+        staleCheck = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.clear()
+        }
+    }
+
     private func took(_ head: Header, _ jpeg: Data) {
         guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
               let picture = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }

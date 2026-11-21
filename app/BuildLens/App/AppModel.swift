@@ -72,8 +72,17 @@ final class AppModel {
     /// How far the view leans to look from above, as the glasses show it (degrees).
     var viewTilt: Double { modelTilt ?? 25 }
 
+    #if os(macOS)
+    /// The glasses' camera, passed on by the phone over the cable (the glasses send it to the
+    /// phone over Bluetooth): the Mac's live view, when the glasses are not plugged in here.
+    let relayedFeed = GlassesFeed()
+    #endif
+
     private func glassesPlaced() {
         glassesBuilding = true
+        #if os(iOS)
+        sync.sendBuilding(true)                // the Mac's live view floats the LEGO too
+        #endif
         #if os(macOS)
         sync.sendPlaced()                      // on to the phone
         #else
@@ -112,6 +121,9 @@ final class AppModel {
         orbit?.apply(spin: spin, zoom: zoom, tilt: tilt)
         #if os(macOS)
         sendView(toPhone: fromGlasses, toGlasses: !fromGlasses)
+        #else
+        // Turned on the glasses (over Bluetooth): on to the Mac, so its view turns too.
+        if fromGlasses { sync.sendView(spin: spin, zoom: zoom, tilt: tilt) }
         #endif
     }
 
@@ -315,6 +327,13 @@ final class AppModel {
             sync.onPlaced = { [weak self] in self?.glassesPlaced() }
             #if os(macOS)
             sync.onScanSkipped = { [weak self] in self?.glassesBuilding = true; self?.glasses.sendScanSkipped() }
+            #if os(macOS)
+            sync.onPicture = { [weak self] picture in self?.relayedFeed.receive(picture) }
+            sync.onBuilding = { [weak self] building in self?.glassesBuilding = building }
+            #else
+            // The glasses' camera over Bluetooth: on to the Mac over the cable.
+            glasses.onPicture = { [weak self] picture in self?.sync.sendPicture(picture) }
+            #endif
             sync.onWake = { [weak self] in self?.glassesBuilding = false; self?.glasses.sendWake() }
             sync.onEnd = { [weak self] in self?.glassesBuilding = false; self?.glasses.sendEnd() }
             #endif

@@ -61,6 +61,7 @@ final class LiveFeed {
      * Dropped if the last one is still on its way. Camera thread.
      */
     static void offer(byte[] grey, byte[] u, byte[] v, int w, int h, CameraFeed.Lens lens, float[] pose) {
+        if (lens != null) offerBluetooth(grey, w, h, lens, pose);
         if (viewer == null || lens == null) return;
         synchronized (lock) {
             if (busy) return;
@@ -101,6 +102,46 @@ final class LiveFeed {
             pendingHeader = head.toString();
             busy = true;
             lock.notifyAll();
+        }
+    }
+
+    /** Over Bluetooth: at most this often, this wide, grey (Bluetooth carries ~20 KB/s). */
+    private static final int BT_EVERY_MS = 250, BT_WIDTH = 192;
+    private static long lastBluetooth;
+    private static int[] btPixels = new int[0];
+
+    /** A small picture for the phone (which passes it to the Mac), while it takes them. Camera thread. */
+    private static void offerBluetooth(byte[] grey, int w, int h, CameraFeed.Lens lens, float[] pose) {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastBluetooth < BT_EVERY_MS || !LinkService.picturesWanted()) return;
+        lastBluetooth = now;
+        try {
+            float k = w / (float) BT_WIDTH;
+            int sw = BT_WIDTH, sh = Math.max(1, Math.round(h / k));
+            if (btPixels.length != sw * sh) btPixels = new int[sw * sh];
+            for (int y = 0; y < sh; y++) {
+                int row = Math.min(h - 1, (int) (y * k)) * w;
+                for (int x = 0; x < sw; x++) btPixels[y * sw + x] = 0xff000000 | (grey[row + Math.min(w - 1, (int) (x * k))] & 0xff) * 0x010101;
+            }
+            Bitmap picture = Bitmap.createBitmap(btPixels, sw, sh, Bitmap.Config.ARGB_8888);
+            ByteArrayOutputStream jpeg = new ByteArrayOutputStream(8 * 1024);
+            picture.compress(Bitmap.CompressFormat.JPEG, 45, jpeg);
+            picture.recycle();
+            StringBuilder head = new StringBuilder(256);
+            head.append(String.format(Locale.US, "{\"w\":%d,\"h\":%d,\"fx\":%.3f,\"fy\":%.3f,\"cx\":%.3f,\"cy\":%.3f,\"step\":%d,\"finished\":%b,\"pose\":",
+                    sw, sh, lens.fx / k, lens.fy / k, (lens.cx + 0.5f) / k - 0.5f, (lens.cy + 0.5f) / k - 0.5f, LinkService.step, LinkService.finished));
+            if (pose == null) head.append("null");
+            else { head.append('['); for (int i = 0; i < 16; i++) head.append(i == 0 ? "" : ",").append(String.format(Locale.US, "%.5f", pose[i])); head.append(']'); }
+            head.append(",\"jpeg\":").append(jpeg.size()).append("}\n");
+            byte[] line = head.toString().getBytes(StandardCharsets.UTF_8);
+            int total = line.length + jpeg.size();
+            ByteArrayOutputStream framed = new ByteArrayOutputStream(4 + total);
+            framed.write(total >>> 24); framed.write(total >>> 16); framed.write(total >>> 8); framed.write(total);
+            framed.write(line);
+            jpeg.writeTo(framed);
+            LinkService.sendPicture(framed.toByteArray());
+        } catch (Throwable e) {
+            Log.w(TAG, "bluetooth picture: " + e);
         }
     }
 
