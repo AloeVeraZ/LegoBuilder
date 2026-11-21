@@ -67,6 +67,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
     private boolean shownFinished = false;
     private int animation = 0;              // bumped on every change so stale timers do nothing
     private Bitmap waitFrame, pressedFrame; // the two pictures of the current step's bounce
+    private int framesFor = -1;             // which step those two pictures belong to
+    private boolean settling;               // a step change is still playing; don't interrupt it
     private long bounceUntil;
     private boolean bouncing;
     private int clicks;
@@ -86,6 +88,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
         loadSteps();
         buildUi();
         gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            // Without this the view is only ever sent the first touch and no tap or swipe is seen.
+            @Override public boolean onDown(MotionEvent e) { return true; }
             @Override public boolean onSingleTapUp(MotionEvent e) { click(); return true; }
             @Override public boolean onFling(MotionEvent a, MotionEvent b, float vx, float vy) {
                 if (!directStepAllowed()) return true;
@@ -109,6 +113,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
         LinkService.setListener(null);
         animation++;                        // stop every timer while nothing is visible
         bouncing = false;
+        settling = false;
+        shownStep = -1;                     // coming back draws the step afresh
         main.removeCallbacks(resolveClicks);
         main.removeCallbacks(allowSleep);
         clicks = 0;
@@ -198,7 +204,13 @@ public class MainActivity extends Activity implements LinkService.Listener {
         overlay.addView(parts);
         overlay.addView(status);
         root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
-        root.setOnTouchListener((v, e) -> gestures.onTouchEvent(e));
+        root.setOnTouchListener((v, e) -> {
+            if (e.getActionMasked() != MotionEvent.ACTION_MOVE) {
+                Log.i(TAG, "touch " + MotionEvent.actionToString(e.getAction()) + " source 0x"
+                        + Integer.toHexString(e.getSource()) + " at " + e.getX() + "," + e.getY());
+            }
+            return gestures.onTouchEvent(e);
+        });
         setContentView(root);
     }
 
@@ -247,6 +259,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
         final String asset = frameOf(step);
         int delay = 0;
         bouncing = false;
+        settling = true;
         if (slotInPrevious) {
             final String before = frameOf(step - 1);
             frame.setImageBitmap(load(variant(before, "-a")));
@@ -257,6 +270,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
             if (run != animation) return;
             waitFrame = load(asset);
             pressedFrame = load(variant(asset, "-w"));
+            framesFor = step;
             startBounce(run);
         }, delay);
     }
@@ -266,6 +280,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
         final int run = ++animation;
         final String last = frameOf(step);
         bouncing = false;
+        settling = false;
         frame.setImageBitmap(load(variant(last, "-a")));
         main.postDelayed(() -> { if (run == animation) frame.setImageBitmap(load(variant(last, "-b"))); }, HALF_MS * 2);
     }
@@ -273,9 +288,17 @@ public class MainActivity extends Activity implements LinkService.Listener {
     /** Two clicks: the step again from the start, with a short blank so it reads as a restart. */
     private void replayStep() {
         stayAwake();
-        if (LinkService.finished || shownStep < 0 || waitFrame == null) { show(); return; }
+        // Anything out of line with what should be showing: draw the step afresh instead.
+        if (LinkService.finished != shownFinished || LinkService.step != shownStep || framesFor != shownStep) {
+            shownStep = -1;
+            shownFinished = false;
+            show();
+            return;
+        }
+        if (LinkService.finished) return;
         final int run = ++animation;
         bouncing = false;
+        settling = true;
         frame.setImageBitmap(null);
         main.postDelayed(() -> { if (run == animation) startBounce(run); }, BLINK_MS);
     }
@@ -283,6 +306,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
     private void startBounce(int run) {
         bounceUntil = SystemClock.uptimeMillis() + BOUNCE_FOR_MS;
         bouncing = true;
+        settling = false;
         bounce(run, false);
     }
 
@@ -309,7 +333,7 @@ public class MainActivity extends Activity implements LinkService.Listener {
     /** Any input brings a stopped bounce back. */
     private void wake() {
         stayAwake();
-        if (LinkService.finished || waitFrame == null) return;
+        if (LinkService.finished || settling || framesFor != shownStep) return;
         if (bouncing) bounceUntil = SystemClock.uptimeMillis() + BOUNCE_FOR_MS;
         else startBounce(++animation);
     }
@@ -411,7 +435,8 @@ public class MainActivity extends Activity implements LinkService.Listener {
 
     @Override
     public boolean onGenericMotionEvent(MotionEvent e) {
-        Log.i(TAG, "motion " + MotionEvent.actionToString(e.getAction()) + " source 0x" + Integer.toHexString(e.getSource())
+        if (e.getActionMasked() != MotionEvent.ACTION_MOVE && e.getActionMasked() != MotionEvent.ACTION_HOVER_MOVE)
+            Log.i(TAG, "motion " + MotionEvent.actionToString(e.getAction()) + " source 0x" + Integer.toHexString(e.getSource())
                 + " at " + e.getX() + "," + e.getY());
         return gestures.onTouchEvent(e) || super.onGenericMotionEvent(e);
     }

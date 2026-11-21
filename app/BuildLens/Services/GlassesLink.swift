@@ -17,6 +17,8 @@ final class GlassesLink {
 
     /// Step, finished, replay.
     var onRemoteStep: ((Int, Bool, Bool) -> Void)?
+    /// The glasses' greeting when the link comes up: the step they are on, and whether finished.
+    var onHello: ((Int, Bool) -> Void)?
 
     private var browser: NWBrowser?
     private var connection: NWConnection?
@@ -32,6 +34,12 @@ final class GlassesLink {
         }
         browser.start(queue: .main)
         self.browser = browser
+    }
+
+    /// Remembers the step the glasses are already on (they just told us), without sending it
+    /// back to them. It is what they get if the link drops and comes back.
+    func note(step: Int, finished: Bool) {
+        last = (step, finished)
     }
 
     /// `replay`: show the same step again from the start (the glasses' double click, or the
@@ -58,8 +66,12 @@ final class GlassesLink {
         switch state {
         case .ready:
             onConnectionChange?(true)
-            if let last { send(step: last.step, finished: last.finished) }
-        case .failed, .cancelled:
+            // With the instructions open the phone leads: the glasses get our step. Otherwise
+            // we wait for their greeting and keep our place in line with theirs.
+            if instructionsOpen, let last { send(step: last.step, finished: last.finished) }
+        case .failed, .cancelled, .waiting:
+            // .waiting: the glasses were found but are not answering (switched off, restarting).
+            // Left alone it would sit there until the network changed; drop it and look again.
             dropConnection()
         default:
             break
@@ -87,6 +99,7 @@ final class GlassesLink {
         let step: Int
         let finished: Bool?
         let replay: Bool?
+        let hello: Bool?
     }
 
     private func drainLines() {
@@ -94,7 +107,11 @@ final class GlassesLink {
             let line = buffer[buffer.startIndex ..< newline]
             buffer.removeSubrange(buffer.startIndex ... newline)
             if let message = try? JSONDecoder().decode(Message.self, from: Data(line)) {
-                onRemoteStep?(message.step, message.finished ?? false, message.replay ?? false)
+                if message.hello == true {
+                    onHello?(message.step, message.finished ?? false)
+                } else {
+                    onRemoteStep?(message.step, message.finished ?? false, message.replay ?? false)
+                }
             }
         }
     }

@@ -71,7 +71,8 @@ adb logcat -s BuildLens
 1. On the iPhone open BuildLens. The big tile should read **Phone + glasses · Open**.
    Tap it: the glasses should show the same step without you touching them.
 2. Press **Next** on the phone: the glasses follow. Click on the glasses: the phone follows.
-3. Close the app on the phone: the glasses keep showing their step.
+3. Close the app on the phone: the glasses keep showing their step, and their buttons
+   still work. Open the instructions on the phone again and it picks up where the glasses are.
 
 If the tile only says **Instructions · Open**, the phone has not found the glasses:
 
@@ -87,6 +88,8 @@ If the tile only says **Instructions · Open**, the phone has not found the glas
   **•••** menu has **Glasses preview**, which shows exactly what the glasses would show.
 - **No glasses at all:** `python3 glasses/tools/fake_glasses.py` on this Mac stands in for
   them (type `n`, `r`, `b` + Enter for one, two, three clicks) to show the two-way sync.
+  Do not leave it running when the real glasses are around: the phone links to whichever
+  it finds first.
 - **No iPhone:** press ▶ in Xcode with **My Mac** as the destination; the Mac app is the same
   app. `web/dist/BuildLens.html` opens in any browser (older animation, no glasses link).
 

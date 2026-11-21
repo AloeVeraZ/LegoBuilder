@@ -85,19 +85,36 @@ final class AppModel {
             self.scene = scene
             self.orbit = OrbitController(scene: scene)
 
-            sync.onRemoteStep = { [weak self] index in self?.go(to: index, broadcast: false) }
+            sync.onRemoteStep = { [weak self] index in
+                guard let self else { return }
+                if self.glasses.instructionsOpen { self.go(to: index, broadcast: false) } else { self.remember(step: index) }
+            }
             sync.onPeersChanged = { [weak self] names in self?.syncPeers = names }
             sync.start()
             glasses.onConnectionChange = { [weak self] connected in self?.glassesConnected = connected }
+            // A click on the glasses. They already show the result, so nothing is sent back
+            // (an echo arriving late could pull them back a step).
             glasses.onRemoteStep = { [weak self] index, finished, replay in
                 guard let self else { return }
+                guard self.glasses.instructionsOpen else {
+                    // The phone is on its home screen or still scanning: just keep our place
+                    // in step with the glasses, without touching what is on screen.
+                    if !finished { self.remember(step: index) }
+                    return
+                }
                 if finished {
-                    if !self.showingFinished { self.finish() }
+                    if !self.showingFinished { self.finish(tellGlasses: false) }
                 } else if replay, index == self.step {
                     self.replay(broadcast: false)
-                } else {
-                    self.go(to: index)
+                } else if index != self.step || self.showingFinished || self.finishTask != nil {
+                    self.go(to: index, tellGlasses: false)
                 }
+            }
+            // Glasses that are part-way through a build when we link: keep our place with
+            // theirs, unless the instructions are open here (then the phone leads).
+            glasses.onHello = { [weak self] index, finished in
+                guard let self, !self.glasses.instructionsOpen, !finished, index > 0 else { return }
+                self.remember(step: index)
             }
             glasses.start()
             voice.onCommand = { [weak self] command in self?.handle(command) }
@@ -153,7 +170,7 @@ final class AppModel {
     }
 
     func back() {
-        if milestoneTask != nil {
+        if milestoneTask != nil || finishTask != nil {
             clearMilestone()
             go(to: step, force: true)
         } else if showingFinished {
@@ -253,10 +270,11 @@ final class AppModel {
     }
 
     /// The last pieces are pushed home first; "You built it" only appears once they are in.
-    func finish() {
+    func finish(tellGlasses: Bool = true) {
         guard !showingFinished, finishTask == nil else { return }
+        clearMilestone()
         let settle = scene?.showFinished(animated: true) ?? 0
-        glasses.send(step: step, finished: true)
+        if tellGlasses { glasses.send(step: step, finished: true) } else { glasses.note(step: step, finished: true) }
         finishTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
@@ -268,7 +286,14 @@ final class AppModel {
         }
     }
 
-    func go(to index: Int, broadcast: Bool = true, force: Bool = false) {
+    /// Keeps our place without changing what is on screen (the instructions are not open).
+    private func remember(step index: Int) {
+        guard let model, index >= 0, index < model.steps.count else { return }
+        step = index
+        showingFinished = false
+    }
+
+    func go(to index: Int, broadcast: Bool = true, force: Bool = false, tellGlasses: Bool = true) {
         guard let model, index >= 0, index < model.steps.count else { return }
         clearMilestone()
         finishTask?.cancel()
@@ -280,7 +305,7 @@ final class AppModel {
         scene?.show(step: index, animated: changed || force, force: changed || force)
         if changed { Haptics.tap() }
         if broadcast { sync.send(step: index) }
-        glasses.send(step: index, finished: false)
+        if tellGlasses { glasses.send(step: index, finished: false) } else { glasses.note(step: index, finished: false) }
         if changed || force { speakCurrent() }
     }
 
@@ -290,11 +315,13 @@ final class AppModel {
     }
 
     private func handle(_ command: VoiceCommands.Command) {
+        // The microphone hears our own read-aloud, which says "next" and "done".
+        guard !speaker.isSpeaking else { return }
         switch command {
         case .next: next()
         case .back: back()
         case .repeatStep: replay()
-        case .finish: finish()
+        case .finish: if step + 1 == stepCount { finish() }
         case .parts:
             if let model { speaker.say(model.spokenSummary(for: step)) }
         }

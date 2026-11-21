@@ -14,6 +14,10 @@ final class StepSpeaker {
         synthesizer.speak(utterance)
     }
 
+    /// True while a step is being read out. Voice commands are ignored meanwhile, because the
+    /// microphone hears the speaker and the spoken text contains words like "next" and "done".
+    var isSpeaking: Bool { synthesizer.isSpeaking }
+
     func stop() {
         synthesizer.stopSpeaking(at: .immediate)
     }

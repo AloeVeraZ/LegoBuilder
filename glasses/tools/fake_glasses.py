@@ -42,7 +42,7 @@ def show(source):
 def read_loop(conn, addr):
     print(f"phone linked from {addr[0]}", flush=True)
     try:
-        conn.sendall((json.dumps(state) + "\n").encode())
+        conn.sendall((json.dumps(dict(state, hello=True)) + "\n").encode())      # greeting, like the real app
         for line in conn.makefile("r", encoding="utf-8"):
             try:
                 msg = json.loads(line)

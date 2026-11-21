@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 
 import org.json.JSONObject;
@@ -131,8 +132,10 @@ public class LinkService extends Service {
                     // Finding us is done, so the Wi-Fi radio can go back to filtering
                     // multicast, which saves power.
                     holdMulticast(false);
-                    // A phone that joins mid-build picks up where the glasses are.
-                    if (!finished) sendTo(s, message(false));
+                    // Say where we are. While its instructions are open the phone leads and
+                    // ignores this; when they are closed it just remembers the place, so
+                    // opening them picks up where the glasses are.
+                    sendTo(s, "{\"step\":" + step + ",\"finished\":" + finished + ",\"hello\":true}\n");
                     notifyLink();
                     new Thread(() -> readLoop(s), "client").start();
                 }
@@ -205,7 +208,18 @@ public class LinkService extends Service {
     }
 
     /** Shows the step: on the screen if it is up, otherwise by bringing the screen up. */
+    @SuppressWarnings("deprecation")
     private void deliver(boolean replay) {
+        // If the display has gone to sleep, wake it for the new step.
+        try {
+            PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+            if (power != null && !power.isInteractive()) {
+                power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "buildlens:step")
+                        .acquire(3000);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "wake: " + e);
+        }
         Listener l = listener;
         if (l != null) {
             l.onRemoteStep(replay);
