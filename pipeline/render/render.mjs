@@ -26,7 +26,9 @@ const server = http.createServer((req, res) => {
 }).listen(0);
 const port = server.address().port;
 
-const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+// BL_CHROMIUM=/path/to/chrome-headless-shell uses a Chromium already on the machine instead
+// of the one this Playwright version expects (saves `npx playwright install` after an update).
+const browser = await chromium.launch({ executablePath: process.env.BL_CHROMIUM || undefined, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage();
 page.on('console', m => { if (m.type() === 'error') console.error('page:', m.text()); });
 page.on('pageerror', e => console.error('page error:', e.message));
@@ -85,6 +87,35 @@ if (want('--hud')) {
     for (let j = 1; j <= 24; j++) { await shot(`finish-${String(j).padStart(2, '0')}.png`, last, { lift: 0, yaw: base + 2 * Math.PI * j / 24 }); count++; }
   }
   console.log(`hud frames: ${count}`);
+}
+// Reference pictures for the vision step finder: for every step, the build before and after
+// it from several sides, framed alike. --refs <outDir> (default <buildDir>/refs), plus
+// --yaws a,b,c (radians) and --elevs a,b (degrees) to choose the sides.
+if (want('--refs')) {
+  const next = args[args.indexOf('--refs') + 1];
+  const outDir = next && !next.startsWith('--') ? path.resolve(next) : path.join(buildDir, 'refs');
+  const list = (flag, fallback) => args.includes(flag) ? args[args.indexOf(flag) + 1].split(',').map(Number) : fallback;
+  const yaws = list('--yaws', [0.65, -0.65, Math.PI - 0.65, -(Math.PI - 0.65)]);
+  const elevs = list('--elevs', [35]);
+  // --bg none: see-through background (for test pictures put on other backgrounds).
+  const bg = args.includes('--bg') && args[args.indexOf('--bg') + 1] === 'none' ? null : 0xf3f4f6;
+  const views = await page.evaluate(() => BL.stepViews());
+  let count = 0;
+  for (const s of stepList) {
+    const id = String(s + 1).padStart(3, '0');
+    // The last earlier step on the same assembly (an attach step follows a sub-build's own
+    // steps); a sub-build's first step starts from nothing (-1).
+    let prev = s - 1;
+    while (prev >= 0 && views[prev].assembly !== views[s].assembly) prev--;
+    for (const [yi, yaw] of yaws.entries()) for (const elev of elevs) {
+      const tag = `y${yi}-e${elev}`;
+      save(outDir, `step-${id}-after-${tag}.png`, await page.evaluate(([s, o]) => BL.state(s, o), [s, { yaw, elev, bg }]));
+      save(outDir, `step-${id}-before-${tag}.png`, await page.evaluate(([p, o]) => BL.state(p, o), [prev, { yaw, elev, bg, frameOn: s }]));
+      count += 2;
+    }
+  }
+  fs.writeFileSync(path.join(outDir, 'refs.json'), JSON.stringify({ yaws, elevs, steps: stepList.map(s => s + 1) }, null, 1));
+  console.log(`refs: ${count} in ${outDir}`);
 }
 if (want('--hero')) {
   save(buildDir, 'hero.png', await page.evaluate(() => BL.finished()));

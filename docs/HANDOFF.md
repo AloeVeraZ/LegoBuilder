@@ -41,6 +41,10 @@ City Tech NYC, team Superpog).
   phone app done. Tag `demo-ready` marks an earlier agreed point on this branch.
 - **`ghost-piece`**: the current work, built on top of `aloe/glasses-demo`. All new feature
   work goes here. General fixes have been cherry-picked to both branches so far.
+- **`step-vision`** (built on `ghost-piece`): the glasses move on by themselves once the
+  step's new piece is seen on the build (the set-down check). See "Testing step-vision"
+  at the end. Written and tested on a Mac without the Android SDK: **never built into an
+  APK, never run on the emulator or the glasses.**
 - The MicroLumin SDK kit is **confidential**: never commit kit files, never put them in a
   public link. The glasses app deliberately does not use the SDK.
 
@@ -200,9 +204,52 @@ glasses side and not touch the phone or Mac apps):**
    for the camera lines.
 2. The line-up is a 2D fit (turn, size, shift) done at one distance; nearer or further the
    ghost drifts a little. A full 3D eye calibration would fix that.
-3. Noticing that a piece has really been pressed in, to move on by itself. Today the user
-   still clicks.
+3. Noticing that a piece has really been pressed in, to move on by itself: written on
+   `step-vision` (below), untested on the glasses.
 4. While the phone shows the marker it cannot show the steps (the glasses show them).
 
 Be straight with the user about which of these work and which are untested; they would
 rather hear it than have a demo fail in front of judges.
+
+## Testing step-vision (the set-down check)
+
+What it does, how it works and how well it did on made-up pictures: `glasses/README.md`,
+"The set-down check". In short: build in your hands, put the build down on its spot (where
+the ghost stands, about the way the ghost shows it), hands away; the glasses check the new
+piece and move on, or wait for a click when they can't tell. In 276 made-up pictures it
+never moved on wrongly; it moved on by itself for about half the pieces on light tables.
+
+What was tried first and dropped: asking a local vision model (gemma4 e4b, qwen3-vl 8b, in
+Ollama on a 16 GB Mac) "is step N done?" with rendered before/after pictures. Both answered
+by position, not by looking (chance level), and the 8B model crashed the Mac by running it
+out of memory. Details: `vision/README.md`.
+
+**On the Mac first** (no glasses needed; JDK, Node and Python):
+
+```bash
+cd pipeline/render && npm install && cd ../..
+glasses/tools/test_check.sh            # check + SetDown tests; ends "SetDown: all as expected"
+```
+
+**Then on the glasses** (needs the Android SDK, see "Machine setup"):
+
+1. `(cd glasses && python3 make_assets.py && ./build.sh)` — the committed
+   `glasses/dist/BuildLensGlasses.apk` does **not** have the check in it; this rebuilds it
+   (make_assets.py now also writes `assets/check.bin`). First thing to see: does it compile?
+   `MainActivity`, `CameraFeed` and `GhostView` changed and could not be compiled here.
+2. `glasses/setup.sh` (installs, camera allowed, line-up).
+3. Phone on the table showing the Table marker; the build on its spot 11 cm right of the code.
+4. `adb logcat -s BuildLens | grep -E "set-down|camera"` and build a step: pick up the build,
+   press the piece in, put it down roughly as the ghost shows, take your hands away.
+5. Expect `set-down check, step N: ...` lines about half a second after things go still,
+   and `-> next step` when two checks in a row say DONE. Send those lines back for tuning.
+
+Things to look at on the real glasses:
+- Does the camera give colour frames (the U/V copy in `CameraFeed.took`)? If every check
+  says "no table to be seen" or the colours look wrong, that is the place.
+- How long a check takes (the `ms` in each line). Over ~1 s, lower `FINE_PX_PER_MM` or the
+  number of starts in `PieceCheck`.
+- The ghost is now drawn 8 mm lower (on the table, not on the phone's screen height): check
+  it still lines up with the real build.
+- `SetDown.MOVING` / `STILL` (how much the spot must change / stay still) were set on
+  made-up pictures; real head movement may need them raised.

@@ -76,6 +76,16 @@ final class CameraFeed {
         void onNoCamera();
     }
 
+    /** Sees every picture in which the marker was found, in colour, on the camera's thread (the set-down check). */
+    interface Watcher {
+        /** pose: camera from marker for exactly this picture (not smoothed). Must not keep `frame`: it is reused. */
+        void onPicture(Frame frame, Lens lens, float[] pose);
+    }
+
+    private volatile Watcher watcher;
+
+    void setWatcher(Watcher w) { watcher = w; }
+
     /** Pictures this far apart at most are searched; the rest are skipped, to save the battery. */
     private static final int EVERY_MS = 66;
     /** A marker lost for longer than this is gone; shorter gaps keep the last place. */
@@ -120,9 +130,11 @@ final class CameraFeed {
         ImageReader reader;
         Lens lens;
         final QrFinder finder = new QrFinder();
-        byte[] grey = new byte[0];
-        /** The colour (U and V, half size), only kept while the Mac is watching (LiveFeed). */
-        byte[] u = new byte[0], v = new byte[0];
+        /** The latest picture: brightness for the marker, colour for the Mac's live view and the set-down check. */
+        Frame frame;
+        /** frame's planes, by their own names. */
+        byte[] grey = new byte[0], u = new byte[0], v = new byte[0];
+        /** The colour was copied for this picture (the Mac is watching, LiveFeed). */
         boolean colour;
         float[] pose;
         long imageTime;
@@ -232,10 +244,14 @@ final class CameraFeed {
                 long now = SystemClock.uptimeMillis();
                 if (now - lastSearch < EVERY_MS) return;
                 lastSearch = now;
-                Image.Plane y = image.getPlanes()[0];
+                Image.Plane[] planes = image.getPlanes();
+                Image.Plane y = planes[0];
                 int w = image.getWidth(), h = image.getHeight(), stride = y.getRowStride();
                 ByteBuffer buf = y.getBuffer();
-                if (grey.length < w * h) grey = new byte[w * h];
+                if (frame == null || frame.width != w || frame.height != h) {
+                    frame = new Frame(w, h);
+                    grey = frame.y; u = frame.u; v = frame.v;
+                }
                 if (stride == w) {
                     buf.get(grey, 0, Math.min(buf.remaining(), w * h));
                 } else {
@@ -244,13 +260,12 @@ final class CameraFeed {
                         buf.get(grey, row * w, w);
                     }
                 }
-                // The colour is only needed for the Mac's live view, so it is only copied then.
-                colour = LiveFeed.watched();
-                if (colour) {
-                    int cw = w / 2, ch = h / 2;
-                    if (u.length != cw * ch) { u = new byte[cw * ch]; v = new byte[cw * ch]; }
-                    copyPlane(image.getPlanes()[1], u, cw, ch);
-                    copyPlane(image.getPlanes()[2], v, cw, ch);
+                // The colour is only copied while something wants it: the Mac's live view or the
+                // set-down check (every 2 x 2 block's U and V).
+                colour = LiveFeed.watched() && planes.length >= 3;
+                if ((colour || watcher != null) && planes.length >= 3) {
+                    copyPlane(planes[1], u, w / 2, h / 2);
+                    copyPlane(planes[2], v, w / 2, h / 2);
                 }
                 image.close();
                 image = null;
@@ -269,19 +284,14 @@ final class CameraFeed {
             int w = bitmap.getWidth(), h = bitmap.getHeight();
             int[] argb = new int[w * h];
             bitmap.getPixels(argb, 0, w, 0, 0, w, h);
-            final byte[] still = new byte[w * h];
-            for (int i = 0; i < argb.length; i++) {
-                int c = argb[i];
-                still[i] = (byte) ((((c >> 16) & 0xff) * 77 + ((c >> 8) & 0xff) * 150 + (c & 0xff) * 29) >> 8);
-            }
+            frame = Frame.fromArgb(argb, w, h);             // the picture never changes, so it is made once
+            grey = frame.y; u = frame.u; v = frame.v;
             lens = Lens.guess(w, h, 0);
             colour = false;
             Log.i(TAG, "camera: still picture " + path + ", lens " + lens);
-            grey = new byte[still.length];
             Runnable again = new Runnable() {
                 @Override public void run() {
                     if (!live) return;
-                    System.arraycopy(still, 0, grey, 0, still.length);
                     imageTime = HeadTracker.clock();
                     search(w, h);
                     background.postDelayed(this, 100);
@@ -355,6 +365,11 @@ final class CameraFeed {
             final float[] fresh = now;
             final long time = imageTime;
             main.post(() -> { if (run == this && live) listener.onMarker(fresh, centre, l, time); });
+            // The set-down check looks at this very picture, with the pose found in it.
+            Watcher wt = watcher;
+            if (wt != null && now != null) {
+                try { wt.onPicture(frame, lens, now); } catch (Throwable e) { Log.e(TAG, "set-down check", e); }
+            }
         }
     }
 

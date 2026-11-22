@@ -21,3 +21,9 @@ glasses/assets/
 glasses/debug.keystore
 glasses/dist/*.idsig
 release/
+
+# Vision step finder: rendered references and test pictures (vision/make_refs.sh)
+vision/refs/
+vision/testshots/
+vision/results/
+vision/*.log

@@ -106,6 +106,55 @@ adb shell am start -n com.buildlens.glasses/.MainActivity --es picture table.png
 The log (`adb logcat -s BuildLens`) prints everything the camera says about itself, how
 often the marker is seen and how long a search takes.
 
+## The set-down check (moves on by itself)
+
+While the ghost is up, the glasses check whether the step's new piece is really on the
+build, and move on to the next step by themselves when it is, exactly as one click would
+(the phone follows). The workflow: build in your hands as usual, put the build down on its
+spot (where the ghost stands, about the way the ghost shows it), take your hands away. A
+moment later the next step appears. Clicks keep working; when the glasses can't tell, they
+simply wait for one.
+
+- `SetDown` watches the spot: once it has changed (hands, the build picked up and put back)
+  and then stays still for about half a second, it has the step checked. Two checks on two
+  different pictures must both say the piece is on before moving on, and nothing is checked
+  again until the spot changes.
+- `PieceCheck` looks at one picture: the table's colour from a ring round the spot; the
+  build's turn (within 45° of the ghost's) and position (within 2.2 cm of the spot), found
+  by trying placings of the step's pieces against the picture's colours; then, pixel by
+  pixel where the new piece should show, whether it looks like the piece or like what would
+  be there without it. It answers DONE, NOT_YET or UNSURE (too little to see: the piece is
+  on the far side, or the same colour as what is behind it, like a black axle in a black block).
+- A copy of the new piece lying beside the build must not count: the build is also placed
+  without the new piece, and the two placings must agree before it says DONE.
+- The step shapes and colours come from `make_assets.py` (`assets/check.bin`).
+- The table is taken to be a phone's thickness (8 mm, `PieceCheck.DROP`) below the marker
+  on the screen; the ghost is now drawn at that height too (it used to stand on the screen's
+  height, 8 mm too high).
+
+Every check is logged: `adb logcat -s BuildLens | grep set-down` shows lines like
+`set-down check, step 7: DONE p=0.93 votes 360/386 ... -> next step`, or UNSURE with the
+reason. Those lines are what to send back when tuning it on the real glasses.
+
+**Tested on this Mac, not on glasses.** `tools/test_check.sh` renders made-up glasses-camera
+pictures (the phone with its real marker, the build on the spot, random tables, light,
+shadows, turns, some with the new piece lying loose beside the build), runs the real marker
+finder and the check on them, and tests `SetDown`'s timing:
+
+| Build put down | Right | Unsure (waits for a click) | Moved on wrongly |
+|---|---|---|---|
+| About as the ghost shows (within 30°) | 39 of 92 | 46 | 0 |
+| Any way at all (`--any-turn`) | 32 of 92 | 53 | 0 |
+
+No wrong move on in 276 test pictures (67 with a loose copy of the piece beside the build).
+On light tables it says DONE for about half the pieces put on; on dark tables (black and dark
+grey pieces barely show) it mostly waits for a click. A check takes ~20 ms on a Mac; expect
+a few hundred ms on the glasses (it runs on the camera's thread, once per set-down).
+
+Unknown until it runs on the glasses: whether the camera's picture is sharp and big enough
+(the build is only 50-150 pixels across at 1280 wide from 40-55 cm), the real lighting, and
+how still people's heads are. Build on a light, plain table for the best chance.
+
 ## Rebuild
 
 `./build.sh` (needs Python 3 with numpy, a JDK and the Android SDK with `platforms;android-34` and
