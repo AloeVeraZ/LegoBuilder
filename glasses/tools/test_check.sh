@@ -8,6 +8,7 @@
 # If Playwright asks for a browser download, set BL_CHROMIUM to a chrome-headless-shell you have.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+java -version >/dev/null 2>&1 || export PATH="${JAVA_HOME:-/opt/homebrew/opt/openjdk@17}/bin:$PATH"
 count=92; seed=2; spread=30; extra=(--turn-range 45)
 while [ $# -gt 0 ]; do
   case "$1" in

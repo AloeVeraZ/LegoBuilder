@@ -129,8 +129,9 @@ simply wait for one.
   without the new piece, and the two placings must agree before it says DONE.
 - The step shapes and colours come from `make_assets.py` (`assets/check.bin`).
 - The table is taken to be a phone's thickness (8 mm, `PieceCheck.DROP`) below the marker
-  on the screen; the ghost is now drawn at that height too (it used to stand on the screen's
-  height, 8 mm too high).
+  on the screen, and the spot `PieceCheck.OFFSET` to its right. The ghost itself is drawn in
+  the middle of the view (`GhostView.FOLLOW_VIEW`), not on that spot, so put the build down
+  beside the phone, about 11 cm to the right of the code.
 
 Every check is logged: `adb logcat -s BuildLens | grep set-down` shows lines like
 `set-down check, step 7: DONE p=0.93 votes 360/386 ... -> next step`, or UNSURE with the
@@ -158,7 +159,8 @@ how still people's heads are. Build on a light, plain table for the best chance.
 ## Rebuild
 
 `./build.sh` (needs Python 3 with numpy, a JDK and the Android SDK with `platforms;android-34` and
-`build-tools;35.0.0`; set `ANDROID_HOME`, and `JAVA_HOME` if `java` is not on your path). It copies the frames and steps from
+`build-tools;35.0.0`; Homebrew's are found by themselves, otherwise set `ANDROID_HOME` and
+`JAVA_HOME`). It copies the frames and steps from
 `app/BuildLens/Resources/BuildData` first, so rerun it after changing the model.
 
 The MicroLumin SDK kit is confidential and is not part of this repo; this app doesn't need it.

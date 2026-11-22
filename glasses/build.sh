@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Builds dist/BuildLensGlasses.apk without Gradle (plain javac + d8 + aapt2 + apksigner).
-# Needs a JDK and the Android SDK (platforms;android-34, build-tools;35.0.0): set ANDROID_HOME.
+# Needs Python 3 with numpy, a JDK and the Android SDK (platforms;android-34, build-tools;35.0.0).
+# Homebrew's are found by themselves; otherwise set ANDROID_HOME (and JAVA_HOME).
 set -euo pipefail
 cd "$(dirname "$0")"
-SDK="${ANDROID_HOME:?set ANDROID_HOME to your Android SDK}"
+SDK="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
+[ -d "$SDK/build-tools/35.0.0" ] || { echo "No Android SDK at $SDK: set ANDROID_HOME (see README)."; exit 1; }
+if ! java -version >/dev/null 2>&1; then
+    export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@17}" PATH="${JAVA_HOME:-/opt/homebrew/opt/openjdk@17}/bin:$PATH"
+fi
 BT="$SDK/build-tools/35.0.0"
 JAR="$SDK/platforms/android-34/android.jar"
 rm -rf build && mkdir -p build/classes build/dex dist
