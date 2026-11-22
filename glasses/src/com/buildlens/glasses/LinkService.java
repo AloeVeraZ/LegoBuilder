@@ -294,6 +294,25 @@ public class LinkService extends Service {
                 }
             }, new android.content.IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED));
             main.postDelayed(bluetoothCheck, 20_000);
+            // A cable plugged in (the phone's USB-C): open the app on the glasses.
+            android.content.IntentFilter plug = new android.content.IntentFilter(Intent.ACTION_POWER_CONNECTED);
+            plug.addAction("android.hardware.usb.action.USB_STATE");
+            registerReceiver(new android.content.BroadcastReceiver() {
+                private boolean wasUsb;
+                @Override public void onReceive(Context c, Intent i) {
+                    boolean usb = i.getBooleanExtra("connected", false);
+                    if (Intent.ACTION_POWER_CONNECTED.equals(i.getAction())) {
+                        Log.i(TAG, "cable: power connected");
+                    } else {
+                        boolean plugged = usb && !wasUsb;
+                        wasUsb = usb;
+                        if (!plugged) return;
+                        Log.i(TAG, "cable: usb connected");
+                    }
+                    if (isInitialStickyBroadcast()) return;
+                    main.post(() -> { if (listener == null) deliver(false); });
+                }
+            }, plug);
         });
     }
 
